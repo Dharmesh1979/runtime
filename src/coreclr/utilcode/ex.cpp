@@ -63,6 +63,23 @@ Exception * Exception::GetOOMException()
     return GetOOMException();
 }
 
+#ifdef DACCESS_COMPILE
+
+extern void* AllocDbiMemory(size_t size);
+extern void DeleteDbiMemory(void* p);
+
+void * Exception::operator new(size_t size)
+{
+    return AllocDbiMemory(size);
+}
+
+void Exception::operator delete(void* ptr)
+{
+    DeleteDbiMemory(ptr);
+}
+
+#endif
+
 //------------------------------------------------------------------------------
 void Exception::Delete(Exception* pvMemory)
 {
@@ -79,7 +96,12 @@ void Exception::Delete(Exception* pvMemory)
         return;
     }
 
-    ::delete((Exception *) pvMemory);
+#ifdef DACCESS_COMPILE
+    delete pvMemory;
+#else
+    ::delete pvMemory;
+#endif
+
 }
 
 void Exception::GetMessage(SString &result)
@@ -551,7 +573,6 @@ LPCSTR Exception::GetHRSymbolicName(HRESULT hr)
     CASE_HRESULT(COR_E_APPDOMAINUNLOADED)
     CASE_HRESULT(COR_E_CANNOTUNLOADAPPDOMAIN)
     CASE_HRESULT(MSEE_E_ASSEMBLYLOADINPROGRESS)
-    CASE_HRESULT(FUSION_E_CACHEFILE_FAILED)
     CASE_HRESULT(FUSION_E_REF_DEF_MISMATCH)
     CASE_HRESULT(FUSION_E_PRIVATE_ASM_DISALLOWED)
     CASE_HRESULT(FUSION_E_INVALID_NAME)
@@ -1133,9 +1154,7 @@ void GetHRMsg(HRESULT hr, SString &result, BOOL bNoGeekStuff/* = FALSE*/)
     }
     CONTRACTL_END;
 
-    result = W("");     // Make sure this routine isn't an inadvertent data-leak exploit!
-
-
+    result.Set(W(""));     // Make sure this routine isn't an inadvertent data-leak exploit!
 
     SString strDescr;
     BOOL    fHaveDescr = FALSE;
@@ -1152,8 +1171,6 @@ void GetHRMsg(HRESULT hr, SString &result, BOOL bNoGeekStuff/* = FALSE*/)
         fHaveDescr = strDescr.FormatMessage(dwFlags, 0, hr, 0);
     }
 
-    LPCSTR name = Exception::GetHRSymbolicName(hr);
-
     // If we can't get a resource string, print the hresult regardless.
     if (!fHaveDescr)
     {
@@ -1167,21 +1184,26 @@ void GetHRMsg(HRESULT hr, SString &result, BOOL bNoGeekStuff/* = FALSE*/)
 
     if (!bNoGeekStuff)
     {
+        SString geekStuffUtf8;
         if (fHaveDescr)
         {
-            result.Append(W(" ("));
+            geekStuffUtf8.AppendUTF8(" (");
         }
 
-        result.AppendPrintf(W("0x%.8X"), hr);
+        geekStuffUtf8.AppendPrintf("0x%.8X", hr);
+
+        LPCSTR name = Exception::GetHRSymbolicName(hr);
         if (name != NULL)
         {
-            result.AppendPrintf(W(" (%S)"), name);
+            geekStuffUtf8.AppendPrintf(" (%s)", name);
         }
 
         if (fHaveDescr)
         {
-            result.Append(W(")"));
+            geekStuffUtf8.AppendUTF8(")");
         }
+
+        result.Append(geekStuffUtf8);
     }
 }
 
@@ -1198,7 +1220,7 @@ void GenerateTopLevelHRExceptionMessage(HRESULT hresult, SString &result)
     }
     CONTRACTL_END;
 
-    result = W("");     // Make sure this routine isn't an inadvertent data-leak exploit!
+    result.Set(W(""));     // Make sure this routine isn't an inadvertent data-leak exploit!
 
     GetHRMsg(hresult, result);
 }

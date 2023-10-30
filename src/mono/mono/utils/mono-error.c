@@ -209,6 +209,17 @@ mono_error_get_exception_name (MonoError *oerror)
 	return error->exception_name;
 }
 
+const char*
+mono_error_get_exception_name_space (MonoError *oerror)
+{
+	MonoErrorInternal *error = (MonoErrorInternal*)oerror;
+
+	if (error->error_code == MONO_ERROR_NONE)
+		return NULL;
+
+	return error->exception_name_space;
+}
+
 /*Return a pointer to the internal error message, might be NULL.
 Caller should not release it.*/
 const char*
@@ -275,7 +286,7 @@ mono_error_set_error (MonoError *oerror, int error_code, const char *msg_format,
 	MonoErrorInternal *error = (MonoErrorInternal*)oerror;
 	mono_error_prepare (error);
 
-	error->error_code = error_code;
+	error->error_code = GINT_TO_UINT16 (error_code);
 	set_error_message ();
 }
 
@@ -370,7 +381,7 @@ mono_error_set_specific (MonoError *oerror, int error_code, const char *message)
 	MonoErrorInternal *error = (MonoErrorInternal*)oerror;
 	mono_error_prepare (error);
 
-	error->error_code = error_code;
+	error->error_code = GINT_TO_UINT16 (error_code);
 	error->full_message = message;
 	error->flags |= MONO_ERROR_FREE_STRINGS;
 }

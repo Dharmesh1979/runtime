@@ -8,7 +8,6 @@ using Internal.Runtime.Augments;
 
 namespace Internal.Runtime.CompilerServices
 {
-    [System.Runtime.CompilerServices.ReflectionBlocked]
     public static class FunctionPointerOps
     {
 #if TARGET_WASM
@@ -82,7 +81,7 @@ namespace Internal.Runtime.CompilerServices
                         System.Diagnostics.Debug.Assert(newSubChunkIndex == 0);
 
                         // New generic descriptors are allocated on the native heap and not tracked in the GC.
-                        IntPtr pNewMem = Marshal.AllocHGlobal((int)(c_genericDictionaryChunkSize * sizeof(GenericMethodDescriptor)));
+                        IntPtr pNewMem = (IntPtr)NativeMemory.Alloc(c_genericDictionaryChunkSize, (nuint)sizeof(GenericMethodDescriptor));
                         s_genericFunctionPointerCollection.Add(pNewMem);
                     }
 
@@ -131,25 +130,23 @@ namespace Internal.Runtime.CompilerServices
         {
             if (!IsGenericMethodPointer(functionPointerA))
             {
-                IntPtr codeTargetA = RuntimeAugments.GetCodeTarget(functionPointerA);
-                IntPtr codeTargetB = RuntimeAugments.GetCodeTarget(functionPointerB);
-                return codeTargetA == codeTargetB;
+                return functionPointerA == functionPointerB;
             }
-            else
+
+            if (!IsGenericMethodPointer(functionPointerB))
             {
-                if (!IsGenericMethodPointer(functionPointerB))
-                    return false;
-
-                GenericMethodDescriptor* pointerDefA = ConvertToGenericDescriptor(functionPointerA);
-                GenericMethodDescriptor* pointerDefB = ConvertToGenericDescriptor(functionPointerB);
-
-                if (pointerDefA->InstantiationArgument != pointerDefB->InstantiationArgument)
-                    return false;
-
-                IntPtr codeTargetA = RuntimeAugments.GetCodeTarget(pointerDefA->MethodFunctionPointer);
-                IntPtr codeTargetB = RuntimeAugments.GetCodeTarget(pointerDefB->MethodFunctionPointer);
-                return codeTargetA == codeTargetB;
+                return false;
             }
+
+            GenericMethodDescriptor* pointerDefA = ConvertToGenericDescriptor(functionPointerA);
+            GenericMethodDescriptor* pointerDefB = ConvertToGenericDescriptor(functionPointerB);
+
+            if (pointerDefA->InstantiationArgument != pointerDefB->InstantiationArgument)
+            {
+                return false;
+            }
+
+            return pointerDefA->MethodFunctionPointer == pointerDefB->MethodFunctionPointer;
         }
     }
 }

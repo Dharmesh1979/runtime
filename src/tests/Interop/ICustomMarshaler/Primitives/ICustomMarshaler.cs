@@ -686,7 +686,8 @@ namespace System.Runtime.InteropServices.Tests
         {
             Assert.Throws<MarshalDirectiveException>(() => CustomMarshallerWithDelegateRef(84664, (ref int x) => x.ToString()));
         }
-        public static int Main(String[] args)
+        [Fact]
+        public static int TestEntryPoint()
         {
             try
             {

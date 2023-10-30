@@ -138,6 +138,47 @@ void InvokeUtil::CopyArg(TypeHandle th, PVOID argRef, ArgDestination *argDest) {
     CorElementType type = th.GetVerifierCorElementType();
 
     switch (type) {
+#ifdef TARGET_RISCV64
+    // RISC-V call convention requires signed ints sign-extended (unsigned -- zero-extended) to register width
+    case ELEMENT_TYPE_BOOLEAN:
+    case ELEMENT_TYPE_U1:
+        _ASSERTE(argRef != NULL);
+        *(UINT64 *)pArgDst = *(UINT8 *)argRef;
+        break;
+
+    case ELEMENT_TYPE_I1:
+        _ASSERTE(argRef != NULL);
+        *(INT64 *)pArgDst = *(INT8 *)argRef;
+        break;
+
+    case ELEMENT_TYPE_U2:
+    case ELEMENT_TYPE_CHAR:
+        _ASSERTE(argRef != NULL);
+        *(UINT64 *)pArgDst = *(UINT16 *)argRef;
+        break;
+
+    case ELEMENT_TYPE_I2:
+        _ASSERTE(argRef != NULL);
+        *(INT64 *)pArgDst = *(INT16 *)argRef;
+        break;
+
+    case ELEMENT_TYPE_R4:
+        _ASSERTE(argRef != NULL);
+        // NaN-box the register value or single-float instructions will treat it as NaN
+        *(UINT64 *)pArgDst = 0xffffffff00000000L | *(UINT32 *)argRef;
+        break;
+
+    case ELEMENT_TYPE_I4:
+        _ASSERTE(argRef != NULL);
+        *(INT64 *)pArgDst = *(INT32 *)argRef;
+        break;
+
+    case ELEMENT_TYPE_U4:
+        _ASSERTE(argRef != NULL);
+        *(UINT64 *)pArgDst = *(UINT32 *)argRef;
+        break;
+
+#else // !TARGET_RISCV64
     case ELEMENT_TYPE_BOOLEAN:
     case ELEMENT_TYPE_U1:
     case ELEMENT_TYPE_I1:
@@ -166,6 +207,7 @@ void InvokeUtil::CopyArg(TypeHandle th, PVOID argRef, ArgDestination *argDest) {
         *(INT32 *)pArgDst = *(INT32 *)argRef;
         break;
     }
+#endif // TARGET_RISCV64
 
     case ELEMENT_TYPE_I8:
     case ELEMENT_TYPE_U8:
@@ -180,20 +222,8 @@ void InvokeUtil::CopyArg(TypeHandle th, PVOID argRef, ArgDestination *argDest) {
 
     case ELEMENT_TYPE_VALUETYPE:
     {
-        if (Nullable::IsNullableType(th))
-        {
-            // ASSUMPTION: we only receive T or NULL values, not Nullable<T> values
-            // and the values are boxed, unlike other value types.
-            MethodTable* pMT = th.AsMethodTable();
-            OBJECTREF src = (OBJECTREF)(Object*)*(PVOID*)argRef;
-            if (!pMT->UnBoxIntoArg(argDest, src))
-                COMPlusThrow(kArgumentException, W("Arg_ObjObj"));
-        }
-        else
-        {
-            MethodTable* pMT = th.GetMethodTable();
-            CopyValueClassArg(argDest, argRef, pMT, 0);
-        }
+        MethodTable* pMT = th.GetMethodTable();
+        CopyValueClassArg(argDest, argRef, pMT, 0);
         break;
     }
 
@@ -213,10 +243,6 @@ void InvokeUtil::CopyArg(TypeHandle th, PVOID argRef, ArgDestination *argDest) {
 
     case ELEMENT_TYPE_BYREF:
     {
-        // We should never get here for nullable types.  Instead invoke
-        // heads these off and morphs the type handle to not be byref anymore
-        _ASSERTE(!Nullable::IsNullableType(th.AsTypeDesc()->GetTypeParam()));
-
         *(PVOID *)pArgDst = argRef;
         break;
     }
@@ -354,10 +380,10 @@ void InvokeUtil::CreatePrimitiveValue(CorElementType dstType,
             *pDst = data;
             break;
         case ELEMENT_TYPE_R4:
-            *pDst = (I8)(*(R4*)pSrc);
+            *pDst = (CLR_I8)(*(CLR_R4*)pSrc);
             break;
         case ELEMENT_TYPE_R8:
-            *pDst = (I8)(*(R8*)pSrc);
+            *pDst = (CLR_I8)(*(CLR_R8*)pSrc);
             break;
         default:
             _ASSERTE(!"Unknown conversion");
@@ -368,35 +394,35 @@ void InvokeUtil::CreatePrimitiveValue(CorElementType dstType,
     case ELEMENT_TYPE_R4:
     case ELEMENT_TYPE_R8:
         {
-        R8 r8 = 0;
+        CLR_R8 r8 = 0;
         switch (srcType) {
         case ELEMENT_TYPE_BOOLEAN:
         case ELEMENT_TYPE_I1:
         case ELEMENT_TYPE_I2:
         case ELEMENT_TYPE_I4:
         IN_TARGET_32BIT(case ELEMENT_TYPE_I:)
-            r8 = (R8)((INT32)data);
+            r8 = (CLR_R8)((INT32)data);
             break;
         case ELEMENT_TYPE_U1:
         case ELEMENT_TYPE_CHAR:
         case ELEMENT_TYPE_U2:
         case ELEMENT_TYPE_U4:
         IN_TARGET_32BIT(case ELEMENT_TYPE_U:)
-            r8 = (R8)((UINT32)data);
+            r8 = (CLR_R8)((UINT32)data);
             break;
         case ELEMENT_TYPE_U8:
         IN_TARGET_64BIT(case ELEMENT_TYPE_U:)
-            r8 = (R8)((UINT64)data);
+            r8 = (CLR_R8)((UINT64)data);
             break;
         case ELEMENT_TYPE_I8:
         IN_TARGET_64BIT(case ELEMENT_TYPE_I:)
-            r8 = (R8)((INT64)data);
+            r8 = (CLR_R8)((INT64)data);
             break;
         case ELEMENT_TYPE_R4:
-            r8 = *(R4*)pSrc;
+            r8 = *(CLR_R4*)pSrc;
             break;
         case ELEMENT_TYPE_R8:
-            r8 = *(R8*)pSrc;
+            r8 = *(CLR_R8*)pSrc;
             break;
         default:
             _ASSERTE(!"Unknown R4 or R8 conversion");
@@ -405,7 +431,7 @@ void InvokeUtil::CreatePrimitiveValue(CorElementType dstType,
         }
 
         if (dstType == ELEMENT_TYPE_R4) {
-            R4 r4 = (R4)r8;
+            CLR_R4 r4 = (CLR_R4)r8;
             *pDst = (UINT32&)r4;
         }
         else {
@@ -586,7 +612,8 @@ OBJECTREF InvokeUtil::CreateClassLoadExcept(OBJECTREF* classes, OBJECTREF* excep
         OBJECTREF o;
         STRINGREF str;
     } gc;
-    ZeroMemory(&gc, sizeof(gc));
+    gc.o = NULL;
+    gc.str = NULL;
 
     MethodTable *pVMClassLoadExcept = CoreLibBinder::GetException(kReflectionTypeLoadException);
     gc.o = AllocateObject(pVMClassLoadExcept);
@@ -696,7 +723,7 @@ void InvokeUtil::ValidateObjectTarget(FieldDesc *pField, TypeHandle enclosingTyp
         return;
 
     if (!pField->IsStatic() && !*target)
-        COMPlusThrow(kTargetException,W("RFLCT.Targ_StatFldReqTarg"));
+        COMPlusThrow(kTargetException,W("RFLCT_Targ_StatFldReqTarg"));
 
     // Verify that the object is of the proper type...
     TypeHandle ty = (*target)->GetTypeHandle();
@@ -921,9 +948,13 @@ void InvokeUtil::SetValidField(CorElementType fldType,
         {
             void* pFieldData;
             if (pField->IsStatic())
+            {
                 pFieldData = pField->GetCurrentStaticAddress();
+            }
             else
-                pFieldData = (*((BYTE**)target)) + pField->GetOffset() + sizeof(Object);
+            {
+                pFieldData = pField->GetInstanceAddress(*target);
+            }
 
             if (*valueObj == NULL)
                 InitValueClass(pFieldData, pMT);
@@ -1064,9 +1095,12 @@ OBJECTREF InvokeUtil::GetFieldValue(FieldDesc* pField, TypeHandle fieldType, OBJ
         GCPROTECT_BEGIN(obj);
         // calculate the offset to the field...
         if (pField->IsStatic())
+        {
             p = pField->GetCurrentStaticAddress();
-        else {
-                p = (*((BYTE**)target)) + pField->GetOffset() + sizeof(Object);
+        }
+        else
+        {
+            p = pField->GetInstanceAddress(*target);
         }
         GCPROTECT_END();
 
@@ -1076,8 +1110,8 @@ OBJECTREF InvokeUtil::GetFieldValue(FieldDesc* pField, TypeHandle fieldType, OBJ
             CopyValueClass(obj->GetData(), p, fieldType.AsMethodTable());
         }
 
-            // If it is a Nullable<T>, box it using Nullable<T> conventions.
-            // TODO: this double allocates on constructions which is wastefull
+        // If it is a Nullable<T>, box it using Nullable<T> conventions.
+        // TODO: this double allocates on constructions which is wastefull
         obj = Nullable::NormalizeBox(obj);
         break;
     }
@@ -1115,5 +1149,3 @@ OBJECTREF InvokeUtil::GetFieldValue(FieldDesc* pField, TypeHandle fieldType, OBJ
 
     return obj;
 }
-
-

@@ -1,13 +1,16 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
+using System.Diagnostics.CodeAnalysis;
 using System.Dynamic.Utils;
+using System.Linq.Expressions;
 
 namespace System.Dynamic
 {
     /// <summary>
     /// Represents the create dynamic operation at the call site, providing the binding semantic and the details about the operation.
     /// </summary>
+    [RequiresDynamicCode(Expression.CallSiteRequiresDynamicCode)]
     public abstract class CreateInstanceBinder : DynamicMetaObjectBinder
     {
         /// <summary>
@@ -23,7 +26,7 @@ namespace System.Dynamic
         /// <summary>
         /// The result type of the operation.
         /// </summary>
-        public override sealed Type ReturnType => typeof(object);
+        public sealed override Type ReturnType => typeof(object);
 
         /// <summary>
         /// Gets the signature of the arguments at the call site.
@@ -67,6 +70,6 @@ namespace System.Dynamic
         /// <summary>
         /// Always returns <c>true</c> because this is a standard <see cref="DynamicMetaObjectBinder"/>.
         /// </summary>
-        internal override sealed bool IsStandardBinder => true;
+        internal sealed override bool IsStandardBinder => true;
     }
 }

@@ -11,6 +11,7 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using Microsoft.WebAssembly.Diagnostics;
+using Wasm.Tests.Internal;
 
 #nullable enable
 
@@ -20,7 +21,11 @@ internal class FirefoxProvider : WasmHostProvider
 {
     private WebSocket? _ideWebSocket;
     private FirefoxDebuggerProxy? _firefoxDebuggerProxy;
-    private static readonly Lazy<string> s_browserPath = new(() => GetBrowserPath(GetPathsToProbe()));
+    private static readonly Lazy<string> s_browserPath = new(() =>
+    {
+        string artifactsBinDir = Path.Combine(Path.GetDirectoryName(typeof(ChromeProvider).Assembly.Location)!, "..", "..", "..");
+        return BrowserLocator.FindFirefox(artifactsBinDir, "BROWSER_PATH_FOR_TESTS");
+    });
 
     public FirefoxProvider(string id, ILogger logger) : base(id, logger)
     {
@@ -33,23 +38,22 @@ internal class FirefoxProvider : WasmHostProvider
                                                 string messagePrefix,
                                                 ILoggerFactory loggerFactory,
                                                 CancellationTokenSource cts,
-                                                int browserReadyTimeoutMs = 20000)
+                                                int browserReadyTimeoutMs = 20000,
+                                                string locale = "en-US")
     {
         if (_isDisposed)
             throw new ObjectDisposedException(nameof(FirefoxProvider));
 
         try
         {
-            string args = $"-profile {GetProfilePath(Id)} -headless -new-instance -private -start-debugger-server {remoteDebuggingPort}";
+            string args = $"-profile {GetProfilePath(Id)} -headless -new-instance -private -start-debugger-server {remoteDebuggingPort} -UILocale {locale}";
             ProcessStartInfo? psi = GetProcessStartInfo(s_browserPath.Value, args, targetUrl);
             string? line = await LaunchHostAsync(
                                     psi,
                                     context,
                                     str =>
                                     {
-                                        // FIXME: instead of this, we can wait for the port to open
-                                        //for running debugger tests on firefox
-                                        if (str?.Contains("console.log: \"ready\"") == true)
+                                        if (str?.Contains("Started devtools server on ") == true)
                                             return $"http://localhost:{remoteDebuggingPort}";
 
                                         return null;
@@ -131,6 +135,7 @@ internal class FirefoxProvider : WasmHostProvider
             user_pref("devtools.debugger.remote-enabled", true);
             user_pref("devtools.debugger.prompt-connection", false);
             user_pref("devtools.console.stdout.content", true);
+            user_pref("browser.dom.window.dump.enabled", true);
             """;
 
         string profilePath = Path.GetFullPath(Path.Combine(DebuggerTestBase.DebuggerTestAppPath, $"test-profile-{Id}"));
@@ -141,25 +146,5 @@ internal class FirefoxProvider : WasmHostProvider
         File.WriteAllText(Path.Combine(profilePath, "prefs.js"), prefs);
 
         return profilePath;
-    }
-
-    private static IEnumerable<string> GetPathsToProbe()
-    {
-        List<string> paths = new();
-        string? asmLocation = Path.GetDirectoryName(typeof(ChromeProvider).Assembly.Location);
-        if (asmLocation is not null)
-        {
-            string baseDir = Path.Combine(asmLocation, "..", "..");
-            paths.Add(Path.Combine(baseDir, "firefox", "firefox", "firefox"));
-            paths.Add(Path.Combine(baseDir, "firefox", "firefox", "firefox.exe"));
-        }
-
-        paths.AddRange(new[]
-        {
-            "C:/Program Files/Mozilla Firefox/firefox.exe",
-            "/Applications/Firefox.app/Contents/MacOS/firefox",
-        });
-
-        return paths;
     }
 }

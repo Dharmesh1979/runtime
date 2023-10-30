@@ -22,10 +22,9 @@ namespace ILCompiler
     {
         private readonly ConditionalWeakTable<Thread, CorInfoImpl> _corinfos = new ConditionalWeakTable<Thread, CorInfoImpl>();
         internal readonly RyuJitCompilationOptions _compilationOptions;
-        private readonly ExternSymbolMappedField _hardwareIntrinsicFlags;
-        private readonly Dictionary<string, InstructionSet> _instructionSetMap;
         private readonly ProfileDataManager _profileDataManager;
         private readonly MethodImportationErrorProvider _methodImportationErrorProvider;
+        private readonly ReadOnlyFieldPolicy _readOnlyFieldPolicy;
         private readonly int _parallelism;
 
         public InstructionSetSupport InstructionSetSupport { get; }
@@ -42,36 +41,33 @@ namespace ILCompiler
             InstructionSetSupport instructionSetSupport,
             ProfileDataManager profileDataManager,
             MethodImportationErrorProvider errorProvider,
+            ReadOnlyFieldPolicy readOnlyFieldPolicy,
             RyuJitCompilationOptions options,
             int parallelism)
             : base(dependencyGraph, nodeFactory, roots, ilProvider, debugInformationProvider, devirtualizationManager, inliningPolicy, logger)
         {
             _compilationOptions = options;
-            _hardwareIntrinsicFlags = new ExternSymbolMappedField(nodeFactory.TypeSystemContext.GetWellKnownType(WellKnownType.Int32), "g_cpuFeatures");
             InstructionSetSupport = instructionSetSupport;
-
-            _instructionSetMap = new Dictionary<string, InstructionSet>();
-            foreach (var instructionSetInfo in InstructionSetFlags.ArchitectureToValidInstructionSets(TypeSystemContext.Target.Architecture))
-            {
-                if (instructionSetInfo.ManagedName != "")
-                    _instructionSetMap.Add(instructionSetInfo.ManagedName, instructionSetInfo.InstructionSet);
-            }
 
             _profileDataManager = profileDataManager;
 
             _methodImportationErrorProvider = errorProvider;
+
+            _readOnlyFieldPolicy = readOnlyFieldPolicy;
 
             _parallelism = parallelism;
         }
 
         public ProfileDataManager ProfileData => _profileDataManager;
 
+        public bool IsInitOnly(FieldDesc field) => _readOnlyFieldPolicy.IsReadOnly(field);
+
         public override IEETypeNode NecessaryTypeSymbolIfPossible(TypeDesc type)
         {
             // RyuJIT makes assumptions around the value of these symbols - in particular, it assumes
             // that type handles and type symbols have a 1:1 relationship. We therefore need to
             // make sure RyuJIT never sees a constructed and unconstructed type symbol for the
-            // same type. If the type is constructable and we don't have whole progam view
+            // same type. If the type is constructable and we don't have whole program view
             // information proving that it isn't, give RyuJIT the constructed symbol even
             // though we just need the unconstructed one.
             // https://github.com/dotnet/runtimelab/issues/1128
@@ -93,7 +89,7 @@ namespace ILCompiler
             ObjectWritingOptions options = default;
             if ((_compilationOptions & RyuJitCompilationOptions.UseDwarf5) != 0)
                 options |= ObjectWritingOptions.UseDwarf5;
-            
+
             if (_debugInformationProvider is not NullDebugInformationProvider)
                 options |= ObjectWritingOptions.GenerateDebugInfo;
 
@@ -144,7 +140,7 @@ namespace ILCompiler
         {
             if (Logger.IsVerbose)
             {
-                Logger.Writer.WriteLine($"Compiling {methodsToCompile.Count} methods...");
+                Logger.LogMessage($"Compiling {methodsToCompile.Count} methods...");
             }
 
             Parallel.ForEach(
@@ -162,7 +158,7 @@ namespace ILCompiler
             {
                 if (Logger.IsVerbose)
                 {
-                    Logger.Writer.WriteLine($"Compiling {methodCodeNodeNeedingCode.Method}...");
+                    Logger.LogMessage($"Compiling {methodCodeNodeNeedingCode.Method}...");
                 }
 
                 CompileSingleMethod(corInfo, methodCodeNodeNeedingCode);
@@ -212,28 +208,6 @@ namespace ILCompiler
                 else
                     Logger.LogError($"Method will always throw because: {exception.Message}", 1005, method, MessageSubCategory.AotAnalysis);
             }
-        }
-
-        public override MethodIL GetMethodIL(MethodDesc method)
-        {
-            TypeDesc owningType = method.OwningType;
-            string intrinsicId = InstructionSetSupport.GetHardwareIntrinsicId(TypeSystemContext.Target.Architecture, owningType);
-            if (!string.IsNullOrEmpty(intrinsicId)
-                && HardwareIntrinsicHelpers.IsIsSupportedMethod(method))
-            {
-                InstructionSet instructionSet = _instructionSetMap[intrinsicId];
-
-                // If this is an instruction set that is optimistically supported, but is not one of the
-                // intrinsics that are known to be always available, emit IL that checks the support level
-                // at runtime.
-                if (!InstructionSetSupport.IsInstructionSetSupported(instructionSet)
-                    && InstructionSetSupport.OptimisticFlags.HasInstructionSet(instructionSet))
-                {
-                    return HardwareIntrinsicHelpers.EmitIsSupportedIL(method, _hardwareIntrinsicFlags, instructionSet);
-                }
-            }
-
-            return base.GetMethodIL(method);
         }
     }
 

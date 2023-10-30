@@ -59,9 +59,9 @@ disassemble wasm executables (.wasm files).
 # Deterministic execution
 
 Wasm execution can be made deterministic by passing the -s DETERMINISTIC=1 option to emcc.
-This will cause the app to allways execute the same way, i.e. using the same memory
+This will cause the app to always execute the same way, i.e. using the same memory
 addresses, random numbers, etc. This can be used to make random crashes happen reliably.
-Sometimes, hovewer, turning this on will make the problem disappear. In this case, it
+Sometimes, however, turning this on will make the problem disappear. In this case, it
 might be useful to add some controlled indeterminism. For example, to make the
 random number generator mostly deterministic, change `$getRandomDevice` in
 `upstream/emscripten/src/library.js` to:
@@ -83,14 +83,10 @@ and change the
 This will hopefully cause the failure to happen reliably.
 
 There is another random number generator in `upstream/emscripten/src/deterministic.js`
-which needs the same treatment:
-```
-var randomBuffer3 = new Uint8Array(2);
-crypto.getRandomValues(randomBuffer3);
+which needs the same treatment.
 
-var MAGIC = (randomBuffer3 [0] << 8) | randomBuffer3 [1];
-console.log ("SEED2: " + MAGIC);
-```
+Running `make patch-deterministic` in `src/mono/wasm` will patch the
+emscripten installation in `src/mono/wasm/emsdk` with these changes.
 
 # Debugging signature mismatch errors
 
@@ -260,4 +256,88 @@ S @ blazor.webassembly.js:1
 C @ blazor.webassembly.js:1
 dispatchGlobalEventToAllElements @ blazor.webassembly.js:1
 onGlobalEvent @ blazor.webassembly.js:1
+```
+
+# Enabling additional logging in Blazor
+
+In .NET 8+, Blazor startup can be controlled by setting the `autostart="false"` attribute on the
+`<script>` tag that loads the blazor webassembly framework.  After that, a call to the
+`globalThis.Blazor.start()` JavaScript function can be passed additional configuration options,
+including setting mono environment variables, or additional command line arguments.
+
+The name of the script and the location of the `<script>` tag depends on whether the project was a
+Blazor WebAssembly project (template `blazorwasm`) or a Blazor project (template `blazor`).
+
+See the runtime `DotnetHostBuilder` interface in
+[dotnet.d.ts](../../../../src/mono/wasm/runtime/dotnet.d.ts) for additional configuration functions.
+
+## Blazor WebAssembly
+
+In a `blazorwasm` project, the script is `_framework/blazor.webassembly.js` and it is loaded in `wwwroot/index.html`:
+
+```html
+<body>
+    <div id="app">
+      ...
+  </div>
+
+  <div id="blazor-error-ui">
+    ...
+  </div>
+    <script src="_framework/blazor.webassembly.js"></script>
+</body>
+```
+
+Replace it with this:
+
+```html
+<body>
+    <div id="app">
+        ...
+    </div>
+
+    <div id="blazor-error-ui">
+        ...
+    </div>
+    <script src="_framework/blazor.webassembly.js" autostart="false"></script>
+
+    <script>
+        Blazor.start({
+            configureRuntime: dotnet => {
+                dotnet.withEnvironmentVariable("MONO_LOG_LEVEL", "debug");
+                dotnet.withEnvironmentVariable("MONO_LOG_MASK", "all");
+            }
+        });
+    </script></body>
+```
+
+## Blazor
+
+In a `blazor` project, the script is `_framework/blazor.web.js` and it is loaded by `Components/App.razor` in the server-side project:
+
+```html
+<body>
+    <Routes />
+    <script src="_framework/blazor.web.js"></script>
+</body>
+```
+
+Replace it with this (note that for a `blazor` project, `Blazor.start` needs an extra dictionary with a `webAssembly` key):
+
+```html
+<body>
+    <Routes />
+    <script src="_framework/blazor.web.js" autostart="false"></script>
+    <script>
+        Blazor.start({
+            webAssembly: {
+                configureRuntime: dotnet => {
+                    console.log("in configureRuntime");
+                    dotnet.withEnvironmentVariable("MONO_LOG_LEVEL", "debug");
+                    dotnet.withEnvironmentVariable("MONO_LOG_MASK", "all");
+                }
+            }
+        });
+    </script>
+</body>
 ```

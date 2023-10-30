@@ -1,13 +1,13 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
-using Xunit;
 using System.IO;
 using System.Xml.Schema;
 using System.Xml.XPath;
+using Xunit;
 using Xunit.Abstractions;
 
-namespace System.Xml.Tests
+namespace System.Xml.XmlSchemaTests
 {
     //[TestCase(Name = "TC_SchemaSet_Add_URL", Desc = "")]
     public class TC_SchemaSet_Add_URL : TC_SchemaSetBase
@@ -34,7 +34,7 @@ namespace System.Xml.Tests
                 // GLOBALIZATION
                 return;
             }
-            Assert.True(false);
+            Assert.Fail();
         }
 
         //-----------------------------------------------------------------------------------
@@ -64,6 +64,7 @@ namespace System.Xml.Tests
 
         //-----------------------------------------------------------------------------------
         [Fact]
+        [ActiveIssue("https://github.com/dotnet/runtime/issues/75123", TestPlatforms.Browser)]
         //[Variation(Desc = "v4 - ns = valid, URL = invalid")]
         public void v4()
         {
@@ -77,7 +78,7 @@ namespace System.Xml.Tests
                 // GLOBALIZATION
                 return;
             }
-            Assert.True(false);
+            Assert.Fail();
         }
 
         //-----------------------------------------------------------------------------------
@@ -95,7 +96,7 @@ namespace System.Xml.Tests
                 // GLOBALIZATION
                 return;
             }
-            Assert.True(false);
+            Assert.Fail();
         }
 
         //-----------------------------------------------------------------------------------
@@ -165,7 +166,7 @@ namespace System.Xml.Tests
                 // GLOBALIZATION
                 return;
             }
-            Assert.True(false);
+            Assert.Fail();
         }
 
         //-----------------------------------------------------------------------------------
@@ -190,7 +191,7 @@ namespace System.Xml.Tests
                 // GLOBALIZATION
                 return;
             }
-            Assert.True(false);
+            Assert.Fail();
         }
 
         //-----------------------------------------------------------------------------------
@@ -216,7 +217,7 @@ namespace System.Xml.Tests
                 // GLOBALIZATION
                 return;
             }
-            Assert.True(false);
+            Assert.Fail();
         }
 
         //-----------------------------------------------------------------------------------
@@ -237,7 +238,7 @@ namespace System.Xml.Tests
                 // GLOBALIZATION
                 return;
             }
-            Assert.True(false);
+            Assert.Fail();
         }
 
         //-----------------------------------------------------------------------------------

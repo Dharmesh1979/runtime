@@ -81,7 +81,7 @@ struct StubUnwindInfoHeaderSuffix
     UCHAR nUnwindInfoSize;  // Size of unwind info in bytes
 };
 
-// Variable-sized struct that preceeds a Stub when the stub requires unwind
+// Variable-sized struct that precedes a Stub when the stub requires unwind
 // information.  Followed by a StubUnwindInfoHeaderSuffix.
 typedef DPTR(struct StubUnwindInfoHeader) PTR_StubUnwindInfoHeader;
 struct StubUnwindInfoHeader
@@ -165,20 +165,6 @@ class StubLinker
         VOID Emit32(unsigned __int32 u32);
         VOID Emit64(unsigned __int64 u64);
         VOID EmitPtr(const VOID *pval);
-
-        //---------------------------------------------------------------
-        // Emit a UTF8 string
-        //---------------------------------------------------------------
-        VOID EmitUtf8(LPCUTF8 pUTF8)
-        {
-            WRAPPER_NO_CONTRACT;
-
-            LPCUTF8 p = pUTF8;
-            while (*(p++)) {
-                //nothing
-            }
-            EmitBytes((const BYTE *)pUTF8, (unsigned int)(p-pUTF8-1));
-        }
 
         //---------------------------------------------------------------
         // Append an instruction containing a reference to a label.
@@ -453,7 +439,8 @@ enum NewStubFlags
     NEWSTUB_FL_INSTANTIATING_METHOD = 0x00000001,
     NEWSTUB_FL_MULTICAST            = 0x00000002,
     NEWSTUB_FL_EXTERNAL             = 0x00000004,
-    NEWSTUB_FL_LOADERHEAP           = 0x00000008
+    NEWSTUB_FL_LOADERHEAP           = 0x00000008,
+    NEWSTUB_FL_THUNK                = 0x00000010
 };
 
 
@@ -478,11 +465,12 @@ class Stub
         LOADER_HEAP_BIT         = 0x20000000,
         INSTANTIATING_STUB_BIT  = 0x10000000,
         UNWIND_INFO_BIT         = 0x08000000,
+        THUNK_BIT               = 0x04000000,
 
-        CODEBYTES_MASK          = UNWIND_INFO_BIT - 1,
+        CODEBYTES_MASK          = THUNK_BIT - 1,
         MAX_CODEBYTES           = CODEBYTES_MASK + 1,
     };
-    static_assert_no_msg(CODEBYTES_MASK < UNWIND_INFO_BIT);
+    static_assert_no_msg(CODEBYTES_MASK < THUNK_BIT);
 
     public:
         //-------------------------------------------------------------------
@@ -525,6 +513,15 @@ class Stub
         {
             LIMITED_METHOD_CONTRACT;
             return (m_numCodeBytesAndFlags & INSTANTIATING_STUB_BIT) != 0;
+        }
+
+        //-------------------------------------------------------------------
+        // Used by the debugger to help step through stubs
+        //-------------------------------------------------------------------
+        BOOL IsManagedThunk()
+        {
+            LIMITED_METHOD_CONTRACT;
+            return (m_numCodeBytesAndFlags & THUNK_BIT) != 0;
         }
 
         //-------------------------------------------------------------------
@@ -887,13 +884,13 @@ class Stub
 //
 //
 //   UINT RRT.GetSizeOfData(refsize, variationCode)
-//     Returns the total size of the seperate data area (if any) that the
+//     Returns the total size of the separate data area (if any) that the
 //     instruction needs in bytes for a given refsize. For this example
 //     on the SH3
 //          if (refsize==k32) return 4; else return 0;
 //
 //   The default implem of this returns 0, so CPUs that don't have need
-//   for a seperate constant area don't have to worry about it.
+//   for a separate constant area don't have to worry about it.
 //
 //
 //   BOOL CanReach(refsize, variationcode, fExternal, offset)

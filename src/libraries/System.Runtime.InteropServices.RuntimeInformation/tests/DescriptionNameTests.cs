@@ -42,20 +42,23 @@ namespace System.Runtime.InteropServices.RuntimeInformationTests
             Console.WriteLine($"### FRAMEWORK: Version={Environment.Version} Description={RuntimeInformation.FrameworkDescription.Trim()}");
 
             string binariesLocation = Path.GetDirectoryName(typeof(object).Assembly.Location);
-            string binariesLocationFormat = PlatformDetection.IsInAppContainer ? "Unknown" : new DriveInfo(binariesLocation).DriveFormat;
+            string binariesLocationFormat = string.IsNullOrEmpty(binariesLocation) ? "Unknown" : new DriveInfo(binariesLocation).DriveFormat;
             Console.WriteLine($"### BINARIES: {binariesLocation} (drive format {binariesLocationFormat})");
 
             string tempPathLocation = Path.GetTempPath();
-            string tempPathLocationFormat = PlatformDetection.IsInAppContainer ? "Unknown" : new DriveInfo(tempPathLocation).DriveFormat;
+            string tempPathLocationFormat = string.IsNullOrEmpty(binariesLocation) ? "Unknown" : new DriveInfo(tempPathLocation).DriveFormat;
             Console.WriteLine($"### TEMP PATH: {tempPathLocation} (drive format {tempPathLocationFormat})");
 
             Console.WriteLine($"### CURRENT DIRECTORY: {Environment.CurrentDirectory}");
 
-            Console.WriteLine($"### CGROUPS VERSION: {Interop.cgroups.s_cgroupVersion}");
-            string cgroupsLocation = Interop.cgroups.s_cgroupMemoryLimitPath;
-            if (cgroupsLocation != null)
+            if (OperatingSystem.IsLinux())
             {
-                Console.WriteLine($"### CGROUPS MEMORY: {cgroupsLocation}");
+                Console.WriteLine($"### CGROUPS VERSION: {Interop.cgroups.s_cgroupVersion}");
+                string cgroupsLocation = Interop.cgroups.s_cgroupMemoryPath;
+                if (cgroupsLocation != null)
+                {
+                    Console.WriteLine($"### CGROUPS MEMORY: {cgroupsLocation}");
+                }
             }
 
             Console.WriteLine($"### ENVIRONMENT VARIABLES");
@@ -171,11 +174,33 @@ namespace System.Runtime.InteropServices.RuntimeInformationTests
         }
 
         [Fact]
-        [SkipOnTargetFramework(~TargetFrameworkMonikers.Netcoreapp)]
         public void VerifyRuntimeNameOnNetCoreApp()
         {
             Assert.True(RuntimeInformation.FrameworkDescription.StartsWith(".NET"), RuntimeInformation.FrameworkDescription);
             Assert.Same(RuntimeInformation.FrameworkDescription, RuntimeInformation.FrameworkDescription);
+        }
+
+        [Fact]
+        public void VerifyFrameworkDescriptionContainsCorrectVersion()
+        {
+            var frameworkDescription = RuntimeInformation.FrameworkDescription;
+            var version = frameworkDescription.Substring(".NET".Length).Trim(); // remove ".NET" prefix
+
+            if (string.IsNullOrEmpty(version))
+                return;
+
+            Assert.DoesNotContain("+", version); // no git hash
+
+#if STABILIZE_PACKAGE_VERSION
+            // a stabilized version looks like 8.0.0
+            Assert.DoesNotContain("-", version);
+            Assert.True(Version.TryParse(version, out Version _));
+#else
+            // a non-stabilized version looks like 8.0.0-preview.5.23280.8 or 8.0.0-dev
+            Assert.Contains("-", version);
+            var versionNumber = version.Substring(0, version.IndexOf("-"));
+            Assert.True(Version.TryParse(versionNumber, out Version _));
+#endif
         }
 
         [Fact]
@@ -201,7 +226,14 @@ namespace System.Runtime.InteropServices.RuntimeInformationTests
         [Fact, PlatformSpecific(TestPlatforms.Linux)]  // Checks Linux name in RuntimeInformation
         public void VerifyLinuxName()
         {
-            Assert.Contains("linux", RuntimeInformation.OSDescription, StringComparison.OrdinalIgnoreCase);
+            if (File.Exists("/etc/os-release"))
+            {
+                Assert.Equal(Interop.OSReleaseFile.GetPrettyName("/etc/os-release"), RuntimeInformation.OSDescription);
+            }
+            else
+            {
+                Assert.Contains("linux", RuntimeInformation.OSDescription, StringComparison.OrdinalIgnoreCase);
+            }
         }
 
         [Fact, PlatformSpecific(TestPlatforms.NetBSD)]  // Checks NetBSD name in RuntimeInformation

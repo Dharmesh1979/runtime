@@ -14,6 +14,8 @@ using Newtonsoft.Json.Linq;
 using Microsoft.WebAssembly.Diagnostics;
 using System.Threading;
 using System.Collections.Generic;
+using Wasm.Tests.Internal;
+using System.Linq;
 
 #nullable enable
 
@@ -24,7 +26,16 @@ internal class ChromeProvider : WasmHostProvider
     static readonly Regex s_parseConnection = new (@"listening on (ws?s://[^\s]*)");
     private WebSocket? _ideWebSocket;
     private DebuggerProxy? _debuggerProxy;
-    private static readonly Lazy<string> s_browserPath = new(() => GetBrowserPath(GetPathsToProbe()));
+    private static readonly Lazy<string> s_browserPath = new(() =>
+    {
+        string artifactsBinDir = Path.Combine(Path.GetDirectoryName(typeof(ChromeProvider).Assembly.Location)!, "..", "..", "..");
+        return BrowserLocator.FindChrome(artifactsBinDir, "BROWSER_PATH_FOR_TESTS");
+    });
+    private static readonly string[] s_messagesToFilterOut = new[]
+    {
+        "Received unexpected number of handles",
+        "Failed to connect to the bus:",
+    };
 
     public ChromeProvider(string id, ILogger logger) : base(id, logger)
     {
@@ -36,12 +47,16 @@ internal class ChromeProvider : WasmHostProvider
                                                 string messagePrefix,
                                                 ILoggerFactory loggerFactory,
                                                 CancellationTokenSource cts,
-                                                int browserReadyTimeoutMs = 20000)
+                                                int browserReadyTimeoutMs = 20000,
+                                                string locale = "en-US")
     {
         string? line;
         try
         {
-            ProcessStartInfo psi = GetProcessStartInfo(s_browserPath.Value, GetInitParms(remoteDebuggingPort), targetUrl);
+            // for WIndows setting --lang arg is enough
+            if (!OperatingSystem.IsWindows())
+                Environment.SetEnvironmentVariable("LANGUAGE", locale);
+            ProcessStartInfo psi = GetProcessStartInfo(s_browserPath.Value, GetInitParms(remoteDebuggingPort, locale), "about:blank");
             line = await LaunchHostAsync(
                                     psi,
                                     context,
@@ -72,7 +87,9 @@ internal class ChromeProvider : WasmHostProvider
 
         _logger.LogInformation($"{messagePrefix} launching proxy for {con_str}");
 
-        _debuggerProxy = new DebuggerProxy(loggerFactory, null, loggerId: Id);
+        var options = new ProxyOptions();
+        options.JustMyCode = true;
+        _debuggerProxy = new DebuggerProxy(loggerFactory, loggerId: Id, options: options);
         TestHarnessProxy.RegisterNewProxy(Id, _debuggerProxy);
         var browserUri = new Uri(con_str);
         WebSocket? ideSocket = await context.WebSockets.AcceptWebSocketAsync().ConfigureAwait(false);
@@ -99,6 +116,14 @@ internal class ChromeProvider : WasmHostProvider
         _isDisposing = false;
     }
 
+    protected override bool ShouldMessageBeLogged(string prefix, string? msg)
+    {
+        if (msg is null || !prefix.Contains("browser-stderr"))
+            return true;
+
+        return !s_messagesToFilterOut.Any(f => msg.Contains(f));
+    }
+
     private async Task<string> ExtractConnUrl (string str, ILogger logger)
     {
         var client = new HttpClient();
@@ -114,7 +139,7 @@ internal class ChromeProvider : WasmHostProvider
             await Task.Delay(100);
 
             var res = await client.GetStringAsync(new Uri(new Uri(str), "/json/list"));
-            logger.LogInformation("res is {0}", res);
+            logger.LogTrace("res is {0}", res);
 
             if (!string.IsNullOrEmpty(res))
             {
@@ -142,9 +167,10 @@ internal class ChromeProvider : WasmHostProvider
         return wsURl;
     }
 
-    private static string GetInitParms(int port)
+    private static string GetInitParms(int port, string lang="en-US")
     {
-        string str = $"--headless --disable-gpu --lang=en-US --incognito --remote-debugging-port={port}";
+        string str = $"--headless --disable-gpu --lang={lang} --incognito --remote-debugging-port={port}";
+        // `/.dockerenv` - is to check if this is running in a codespace
         if (File.Exists("/.dockerenv"))
         {
             Console.WriteLine ("Detected a container, disabling sandboxing for debugger tests.");
@@ -152,29 +178,4 @@ internal class ChromeProvider : WasmHostProvider
         }
         return str;
     }
-
-    private static IEnumerable<string> GetPathsToProbe()
-    {
-        List<string> paths = new();
-        string? asmLocation = Path.GetDirectoryName(typeof(ChromeProvider).Assembly.Location);
-        if (asmLocation is not null)
-        {
-            string baseDir = Path.Combine(asmLocation, "..", "..");
-            paths.Add(Path.Combine(baseDir, "chrome", "chrome-linux", "chrome"));
-            paths.Add(Path.Combine(baseDir, "chrome", "chrome-win", "chrome.exe"));
-        }
-
-        paths.AddRange(new[]
-        {
-            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-            "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
-            "/usr/bin/chromium",
-            "C:/Program Files/Google/Chrome/Application/chrome.exe",
-            "/usr/bin/chromium-browser"
-        });
-
-        return paths;
-    }
-
 }

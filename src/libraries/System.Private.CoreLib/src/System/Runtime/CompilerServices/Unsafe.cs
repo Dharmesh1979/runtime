@@ -1,7 +1,7 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
-#pragma warning disable IDE0060 // implementations provided by the JIT
+#pragma warning disable IDE0060 // implementations provided as intrinsics
 using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.Versioning;
@@ -9,8 +9,10 @@ using System.Runtime.Versioning;
 //
 // The implementations of most the methods in this file are provided as intrinsics.
 // In CoreCLR, the body of the functions are replaced by the EE with unsafe code. See see getILIntrinsicImplementationForUnsafe for details.
-// In CoreRT, see Internal.IL.Stubs.UnsafeIntrinsics for details.
+// In AOT compilers, see Internal.IL.Stubs.UnsafeIntrinsics for details.
 //
+
+#pragma warning disable 8500 // address / sizeof of managed types
 
 namespace System.Runtime.CompilerServices
 {
@@ -24,7 +26,7 @@ namespace System.Runtime.CompilerServices
         /// </summary>
         [Intrinsic]
         // CoreCLR:METHOD__UNSAFE__AS_POINTER
-        // CG2:AsPointer
+        // AOT:AsPointer
         // Mono:AsPointer
         [NonVersionable]
         [CLSCompliant(false)]
@@ -43,19 +45,13 @@ namespace System.Runtime.CompilerServices
         /// </summary>
         [Intrinsic]
         // CoreCLR:METHOD__UNSAFE__SIZEOF
-        // CG2:SizeOf
+        // AOT:SizeOf
         // Mono:SizeOf
         [NonVersionable]
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static int SizeOf<T>()
         {
-#if CORECLR
-            typeof(T).ToString(); // Type token used by the actual method body
-#endif
-            throw new PlatformNotSupportedException();
-
-            // sizeof !!T
-            // ret
+            return sizeof(T);
         }
 
         /// <summary>
@@ -63,11 +59,11 @@ namespace System.Runtime.CompilerServices
         /// </summary>
         [Intrinsic]
         // CoreCLR:METHOD__UNSAFE__OBJECT_AS
-        // CG2:As
+        // AOT:As
         // Mono:As
         [NonVersionable]
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        [return: NotNullIfNotNull("value")]
+        [return: NotNullIfNotNull(nameof(o))]
         public static T As<T>(object? o) where T : class?
         {
             throw new PlatformNotSupportedException();
@@ -81,7 +77,7 @@ namespace System.Runtime.CompilerServices
         /// </summary>
         [Intrinsic]
         // CoreCLR:METHOD__UNSAFE__BYREF_AS
-        // CG2:As
+        // AOT:As
         // Mono:As
         [NonVersionable]
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -98,7 +94,7 @@ namespace System.Runtime.CompilerServices
         /// </summary>
         [Intrinsic]
         // CoreCLR:METHOD__UNSAFE__BYREF_ADD
-        // CG2:Add
+        // AOT:Add
         // Mono:Add
         [NonVersionable]
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -108,7 +104,7 @@ namespace System.Runtime.CompilerServices
             typeof(T).ToString(); // Type token used by the actual method body
             throw new PlatformNotSupportedException();
 #else
-            return ref AddByteOffset(ref source, (IntPtr)(elementOffset * (nint)SizeOf<T>()));
+            return ref AddByteOffset(ref source, (IntPtr)(elementOffset * (nint)sizeof(T)));
 #endif
             // ldarg .0
             // ldarg .1
@@ -124,7 +120,7 @@ namespace System.Runtime.CompilerServices
         /// </summary>
         [Intrinsic]
         // CoreCLR:METHOD__UNSAFE__BYREF_INTPTR_ADD
-        // CG2:Add
+        // AOT:Add
         // Mono:Add
         [NonVersionable]
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -134,7 +130,7 @@ namespace System.Runtime.CompilerServices
             typeof(T).ToString(); // Type token used by the actual method body
             throw new PlatformNotSupportedException();
 #else
-            return ref AddByteOffset(ref source, (IntPtr)((nint)elementOffset * (nint)SizeOf<T>()));
+            return ref AddByteOffset(ref source, (IntPtr)((nint)elementOffset * (nint)sizeof(T)));
 #endif
 
             // ldarg .0
@@ -150,7 +146,7 @@ namespace System.Runtime.CompilerServices
         /// </summary>
         [Intrinsic]
         // CoreCLR:METHOD__UNSAFE__PTR_ADD
-        // CG2:Add
+        // AOT:Add
         // Mono:Add
         [NonVersionable]
         [CLSCompliant(false)]
@@ -161,7 +157,7 @@ namespace System.Runtime.CompilerServices
             typeof(T).ToString(); // Type token used by the actual method body
             throw new PlatformNotSupportedException();
 #else
-            return (byte*)source + (elementOffset * (nint)SizeOf<T>());
+            return (byte*)source + (elementOffset * (nint)sizeof(T));
 #endif
 
             // ldarg .0
@@ -187,7 +183,7 @@ namespace System.Runtime.CompilerServices
             typeof(T).ToString();
             throw new PlatformNotSupportedException();
 #else
-            return ref AddByteOffset(ref source, (nuint)(elementOffset * (nuint)SizeOf<T>()));
+            return ref AddByteOffset(ref source, (nuint)(elementOffset * (nuint)sizeof(T)));
 #endif
 
             // ldarg .0
@@ -203,7 +199,7 @@ namespace System.Runtime.CompilerServices
         /// </summary>
         [Intrinsic]
         // CoreCLR:METHOD__UNSAFE__BYREF_ADD_BYTE_OFFSET_UINTPTR
-        // CG2:AddByteOffset
+        // AOT:AddByteOffset
         // Mono:AddByteOffset
         [NonVersionable]
         [CLSCompliant(false)]
@@ -228,11 +224,11 @@ namespace System.Runtime.CompilerServices
         /// </summary>
         [Intrinsic]
         // CoreCLR:METHOD__UNSAFE__BYREF_ARE_SAME
-        // CG2:AreSame
+        // AOT:AreSame
         // Mono:AreSame
         [NonVersionable]
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static bool AreSame<T>([AllowNull] ref T left, [AllowNull] ref T right)
+        public static bool AreSame<T>([AllowNull] ref readonly T left, [AllowNull] ref readonly T right)
         {
             throw new PlatformNotSupportedException();
 
@@ -243,6 +239,24 @@ namespace System.Runtime.CompilerServices
         }
 
         /// <summary>
+        /// Reinterprets the given value of type <typeparamref name="TFrom" /> as a value of type <typeparamref name="TTo" />.
+        /// </summary>
+        /// <exception cref="NotSupportedException">The size of <typeparamref name="TFrom" /> and <typeparamref name="TTo" /> are not the same.</exception>
+        [Intrinsic]
+        [NonVersionable]
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static TTo BitCast<TFrom, TTo>(TFrom source)
+            where TFrom : struct
+            where TTo : struct
+        {
+            if (sizeof(TFrom) != sizeof(TTo))
+            {
+                ThrowHelper.ThrowNotSupportedException();
+            }
+            return ReadUnaligned<TTo>(ref As<TFrom, byte>(ref source));
+        }
+
+        /// <summary>
         /// Copies a value of type T to the given location.
         /// </summary>
         [Intrinsic]
@@ -250,7 +264,7 @@ namespace System.Runtime.CompilerServices
         [NonVersionable]
         [CLSCompliant(false)]
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void Copy<T>(void* destination, ref T source)
+        public static void Copy<T>(void* destination, ref readonly T source)
         {
             throw new PlatformNotSupportedException();
 
@@ -307,7 +321,7 @@ namespace System.Runtime.CompilerServices
         [NonVersionable]
         [CLSCompliant(false)]
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void CopyBlock(ref byte destination, ref byte source, uint byteCount)
+        public static void CopyBlock(ref byte destination, ref readonly byte source, uint byteCount)
         {
             throw new PlatformNotSupportedException();
 
@@ -346,7 +360,7 @@ namespace System.Runtime.CompilerServices
         [NonVersionable]
         [CLSCompliant(false)]
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static void CopyBlockUnaligned(ref byte destination, ref byte source, uint byteCount)
+        public static void CopyBlockUnaligned(ref byte destination, ref readonly byte source, uint byteCount)
         {
             throw new PlatformNotSupportedException();
 
@@ -367,11 +381,11 @@ namespace System.Runtime.CompilerServices
         /// </remarks>
         [Intrinsic]
         // CoreCLR:CoreCLR:METHOD__UNSAFE__BYREF_IS_ADDRESS_GREATER_THAN
-        // CG2:IsAddressGreaterThan
+        // AOT:IsAddressGreaterThan
         // Mono:IsAddressGreaterThan
         [NonVersionable]
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static bool IsAddressGreaterThan<T>([AllowNull] ref T left, [AllowNull] ref T right)
+        public static bool IsAddressGreaterThan<T>([AllowNull] ref readonly T left, [AllowNull] ref readonly T right)
         {
             throw new PlatformNotSupportedException();
 
@@ -390,11 +404,11 @@ namespace System.Runtime.CompilerServices
         /// </remarks>
         [Intrinsic]
         // CoreCLR:METHOD__UNSAFE__BYREF_IS_ADDRESS_LESS_THAN
-        // CG2:IsAddressLessThan
+        // AOT:IsAddressLessThan
         // Mono:IsAddressLessThan
         [NonVersionable]
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static bool IsAddressLessThan<T>([AllowNull] ref T left, [AllowNull] ref T right)
+        public static bool IsAddressLessThan<T>([AllowNull] ref readonly T left, [AllowNull] ref readonly T right)
         {
             throw new PlatformNotSupportedException();
 
@@ -469,7 +483,7 @@ namespace System.Runtime.CompilerServices
         /// </summary>
         [Intrinsic]
         // CoreCLR:METHOD__UNSAFE__BYREF_INIT_BLOCK_UNALIGNED
-        // CG2:InitBlockUnaligned
+        // AOT:InitBlockUnaligned
         // Mono:InitBlockUnaligned
         [NonVersionable]
         [CLSCompliant(false)]
@@ -494,7 +508,7 @@ namespace System.Runtime.CompilerServices
         /// </summary>
         [Intrinsic]
         // CoreCLR:METHOD__UNSAFE__PTR_READ_UNALIGNED
-        // CG2:ReadUnaligned
+        // AOT:ReadUnaligned
         // Mono:ReadUnaligned
         [NonVersionable]
         [CLSCompliant(false)]
@@ -505,7 +519,7 @@ namespace System.Runtime.CompilerServices
             typeof(T).ToString(); // Type token used by the actual method body
             throw new PlatformNotSupportedException();
 #else
-            return Unsafe.As<byte, T>(ref *(byte*)source);
+            return *(T*)source;
 #endif
 
             // ldarg.0
@@ -519,17 +533,17 @@ namespace System.Runtime.CompilerServices
         /// </summary>
         [Intrinsic]
         // CoreCLR:METHOD__UNSAFE__BYREF_READ_UNALIGNED
-        // CG2:ReadUnaligned
+        // AOT:ReadUnaligned
         // Mono:ReadUnaligned
         [NonVersionable]
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static T ReadUnaligned<T>(ref byte source)
+        public static T ReadUnaligned<T>(ref readonly byte source)
         {
 #if CORECLR
             typeof(T).ToString(); // Type token used by the actual method body
             throw new PlatformNotSupportedException();
 #else
-            return Unsafe.As<byte, T>(ref source);
+            return As<byte, T>(ref Unsafe.AsRef(in source));
 #endif
 
             // ldarg.0
@@ -543,7 +557,7 @@ namespace System.Runtime.CompilerServices
         /// </summary>
         [Intrinsic]
         // CoreCLR:METHOD__UNSAFE__PTR_WRITE_UNALIGNED
-        // CG2:WriteUnaligned
+        // AOT:WriteUnaligned
         // Mono:WriteUnaligned
         [NonVersionable]
         [CLSCompliant(false)]
@@ -554,7 +568,7 @@ namespace System.Runtime.CompilerServices
             typeof(T).ToString(); // Type token used by the actual method body
             throw new PlatformNotSupportedException();
 #else
-            Unsafe.As<byte, T>(ref *(byte*)destination) = value;
+            *(T*)destination = value;
 #endif
 
             // ldarg .0
@@ -569,7 +583,7 @@ namespace System.Runtime.CompilerServices
         /// </summary>
         [Intrinsic]
         // CoreCLR:METHOD__UNSAFE__BYREF_WRITE_UNALIGNED
-        // CG2:WriteUnaligned
+        // AOT:WriteUnaligned
         // Mono:WriteUnaligned
         [NonVersionable]
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -579,7 +593,7 @@ namespace System.Runtime.CompilerServices
             typeof(T).ToString(); // Type token used by the actual method body
             throw new PlatformNotSupportedException();
 #else
-            Unsafe.As<byte, T>(ref destination) = value;
+            As<byte, T>(ref destination) = value;
 #endif
 
             // ldarg .0
@@ -594,7 +608,7 @@ namespace System.Runtime.CompilerServices
         /// </summary>
         [Intrinsic]
         // CoreCLR:METHOD__UNSAFE__BYREF_ADD_BYTE_OFFSET_INTPTR
-        // CG2:AddByteOffset
+        // AOT:AddByteOffset
         // Mono:AddByteOffset
         [NonVersionable]
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -612,66 +626,50 @@ namespace System.Runtime.CompilerServices
         /// <summary>
         /// Reads a value of type <typeparamref name="T"/> from the given location.
         /// </summary>
-        //[Intrinsic]
-        // CG2:Read
+        [Intrinsic]
         [NonVersionable]
         [CLSCompliant(false)]
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static T Read<T>(void* source)
         {
-            return Unsafe.As<byte, T>(ref *(byte*)source);
-
-            // ldarg.0
-            // ldobj !!T
-            // ret
+            return *(T*)source;
         }
 
         /// <summary>
         /// Writes a value of type <typeparamref name="T"/> to the given location.
         /// </summary>
-        //[Intrinsic]
-        // CG2:Write
+        [Intrinsic]
         [NonVersionable]
         [CLSCompliant(false)]
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Write<T>(void* destination, T value)
         {
-            Unsafe.As<byte, T>(ref *(byte*)destination) = value;
-
-            // ldarg .0
-            // ldarg .1
-            // stobj !!T
-            // ret
+            *(T*)destination = value;
         }
 
         /// <summary>
         /// Reinterprets the given location as a reference to a value of type <typeparamref name="T"/>.
         /// </summary>
         [Intrinsic]
-        // CoreCLR:METHOD__UNSAFE__AS_REF_POINTER
-        // CG2:AsRef
-        // Mono:AsRef
         [NonVersionable]
         [CLSCompliant(false)]
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static ref T AsRef<T>(void* source)
         {
-            return ref Unsafe.As<byte, T>(ref *(byte*)source);
-
-            // ldarg .0
-            // ret
+            return ref *(T*)source;
         }
 
         /// <summary>
         /// Reinterprets the given location as a reference to a value of type <typeparamref name="T"/>.
         /// </summary>
+        /// <remarks>The lifetime of the reference will not be validated when using this API.</remarks>
         [Intrinsic]
         // CoreCLR:METHOD__UNSAFE__AS_REF_IN
-        // CG2:AsRef
+        // AOT:AsRef
         // Mono:AsRef
         [NonVersionable]
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static ref T AsRef<T>(in T source)
+        public static ref T AsRef<T>(scoped ref readonly T source)
         {
             throw new PlatformNotSupportedException();
 
@@ -684,11 +682,11 @@ namespace System.Runtime.CompilerServices
         /// </summary>
         [Intrinsic]
         // CoreCLR:METHOD__UNSAFE__BYREF_BYTE_OFFSET
-        // CG2:ByteOffset
+        // AOT:ByteOffset
         // Mono:ByteOffset
         [NonVersionable]
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static IntPtr ByteOffset<T>([AllowNull] ref T origin, [AllowNull] ref T target)
+        public static IntPtr ByteOffset<T>([AllowNull] ref readonly T origin, [AllowNull] ref readonly T target)
         {
             throw new PlatformNotSupportedException();
 
@@ -703,12 +701,12 @@ namespace System.Runtime.CompilerServices
         /// </summary>
         [Intrinsic]
         // CoreCLR:METHOD__UNSAFE__BYREF_NULLREF
-        // CG2:NullRef
+        // AOT:NullRef
         [NonVersionable]
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static ref T NullRef<T>()
         {
-            return ref Unsafe.AsRef<T>(null);
+            return ref AsRef<T>(null);
 
             // ldc.i4.0
             // conv.u
@@ -723,12 +721,12 @@ namespace System.Runtime.CompilerServices
         /// </remarks>
         [Intrinsic]
         // CoreCLR:METHOD__UNSAFE__BYREF_IS_NULL
-        // CG2: IsNullRef
+        // AOT: IsNullRef
         [NonVersionable]
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static bool IsNullRef<T>(ref T source)
+        public static bool IsNullRef<T>(ref readonly T source)
         {
-            return Unsafe.AsPointer(ref source) == null;
+            return AsPointer(ref Unsafe.AsRef(in source)) == null;
 
             // ldarg.0
             // ldc.i4.0
@@ -742,7 +740,7 @@ namespace System.Runtime.CompilerServices
         /// </summary>
         [Intrinsic]
         // CoreCLR:METHOD__UNSAFE__SKIPINIT
-        // CG2:SkipInit
+        // AOT:SkipInit
         // Mono:SkipInit
         [NonVersionable]
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -766,7 +764,7 @@ namespace System.Runtime.CompilerServices
             typeof(T).ToString();
             throw new PlatformNotSupportedException();
 #else
-            return ref SubtractByteOffset(ref source, (IntPtr)(elementOffset * (nint)SizeOf<T>()));
+            return ref SubtractByteOffset(ref source, (IntPtr)(elementOffset * (nint)sizeof(T)));
 #endif
 
             // ldarg .0
@@ -792,7 +790,7 @@ namespace System.Runtime.CompilerServices
             typeof(T).ToString();
             throw new PlatformNotSupportedException();
 #else
-            return (byte*)source - (elementOffset * (nint)Unsafe.SizeOf<T>());
+            return (byte*)source - (elementOffset * (nint)sizeof(T));
 #endif
 
             // ldarg .0
@@ -817,7 +815,7 @@ namespace System.Runtime.CompilerServices
             typeof(T).ToString();
             throw new PlatformNotSupportedException();
 #else
-            return ref SubtractByteOffset(ref source, (IntPtr)((nint)elementOffset * (nint)SizeOf<T>()));
+            return ref SubtractByteOffset(ref source, (IntPtr)((nint)elementOffset * (nint)sizeof(T)));
 #endif
 
             // ldarg .0
@@ -842,7 +840,7 @@ namespace System.Runtime.CompilerServices
             typeof(T).ToString();
             throw new PlatformNotSupportedException();
 #else
-            return ref SubtractByteOffset(ref source, (nuint)(elementOffset * (nuint)Unsafe.SizeOf<T>()));
+            return ref SubtractByteOffset(ref source, (nuint)(elementOffset * (nuint)sizeof(T)));
 #endif
 
             // ldarg .0

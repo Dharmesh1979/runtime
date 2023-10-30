@@ -69,10 +69,7 @@ namespace System.Security.Cryptography
                         }
                         else if (padding.Mode == RSAEncryptionPaddingMode.Oaep)
                         {
-                            RsaPaddingProcessor processor =
-                                RsaPaddingProcessor.OpenProcessor(padding.OaepHashAlgorithm);
-
-                            processor.PadOaep(data, paddedMessage);
+                            RsaPaddingProcessor.PadOaep(padding.OaepHashAlgorithm, data, paddedMessage);
                         }
                         else
                         {
@@ -154,10 +151,7 @@ namespace System.Security.Cryptography
                         }
                         else if (padding.Mode == RSAEncryptionPaddingMode.Oaep)
                         {
-                            RsaPaddingProcessor processor =
-                                RsaPaddingProcessor.OpenProcessor(padding.OaepHashAlgorithm);
-
-                            processor.PadOaep(data, paddedMessage);
+                            RsaPaddingProcessor.PadOaep(padding.OaepHashAlgorithm, data, paddedMessage);
                         }
                         else
                         {
@@ -204,7 +198,7 @@ namespace System.Security.Cryptography
         // Now that the padding mode and information have been marshaled to their native counterparts, perform the encryption or decryption.
         private unsafe byte[] EncryptOrDecrypt(SafeNCryptKeyHandle key, ReadOnlySpan<byte> input, AsymmetricPaddingMode paddingMode, void* paddingInfo, bool encrypt)
         {
-            int estimatedSize = KeySize / 8;
+            int estimatedSize = GetMaxOutputSize();
 #if DEBUG
             estimatedSize = 2;  // Make sure the NTE_BUFFER_TOO_SMALL scenario gets exercised.
 #endif
@@ -225,7 +219,7 @@ namespace System.Security.Cryptography
                 }
             }
 
-            if (errorCode == ErrorCode.NTE_BUFFER_TOO_SMALL)
+            if (errorCode.IsBufferTooSmall())
             {
                 CryptographicOperations.ZeroMemory(output);
                 output = new byte[numBytesNeeded];
@@ -271,7 +265,7 @@ namespace System.Security.Cryptography
                     case ErrorCode.ERROR_SUCCESS:
                         bytesWritten = numBytesNeeded;
                         return true;
-                    case ErrorCode.NTE_BUFFER_TOO_SMALL:
+                    case ErrorCode code when code.IsBufferTooSmall():
                         bytesWritten = 0;
                         return false;
                     case ErrorCode.STATUS_UNSUCCESSFUL:

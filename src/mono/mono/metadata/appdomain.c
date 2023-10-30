@@ -26,13 +26,6 @@
 #ifdef HAVE_UNISTD_H
 #include <unistd.h>
 #endif
-#ifdef HAVE_UTIME_H
-#include <utime.h>
-#else
-#ifdef HAVE_SYS_UTIME_H
-#include <sys/utime.h>
-#endif
-#endif
 
 #include <mono/metadata/gc-internals.h>
 #include <mono/metadata/object.h>
@@ -56,10 +49,8 @@
 #include <mono/metadata/profiler-private.h>
 #include <mono/metadata/reflection-internals.h>
 #include <mono/metadata/abi-details.h>
-#include <mono/utils/mono-uri.h>
 #include <mono/utils/mono-logger-internals.h>
 #include <mono/utils/mono-path.h>
-#include <mono/utils/mono-stdlib.h>
 #include <mono/utils/mono-error-internals.h>
 #include <mono/utils/atomic.h>
 #include <mono/utils/mono-memory-model.h>
@@ -571,6 +562,10 @@ mono_domain_fire_assembly_load_event (MonoDomain *domain, MonoAssembly *assembly
 	if (!method)
 		goto exit;
 
+	if (assembly->dynamic)
+		/* Called by RuntimeAssemblyBuilder:.ctor () after the manifest module has been created */
+		goto exit;
+
 	MonoReflectionAssemblyHandle assembly_handle;
 	assembly_handle = mono_assembly_get_object_handle (assembly, error);
 	goto_if_nok (error, exit);
@@ -939,7 +934,7 @@ runtimeconfig_json_get_buffer (MonovmRuntimeConfigArguments *arg, MonoFileMap **
 			g_assert (*file_map);
 			file_len = mono_file_map_size (*file_map);
 			g_assert (file_len > 0);
-			buffer = (char *)mono_file_map (file_len, MONO_MMAP_READ|MONO_MMAP_PRIVATE, mono_file_map_fd (*file_map), 0, buf_handle);
+			buffer = (char *)mono_file_map (GUINT64_TO_SIZE (file_len), MONO_MMAP_READ|MONO_MMAP_PRIVATE, mono_file_map_fd (*file_map), 0, buf_handle);
 			g_assert (buffer);
 			return buffer;
 		}
@@ -977,7 +972,7 @@ runtimeconfig_json_read_props (const char *ptr, const char **endp, int nprops, g
 }
 
 void
-mono_security_enable_core_clr ()
+mono_security_enable_core_clr (void)
 {
 	// no-op
 }

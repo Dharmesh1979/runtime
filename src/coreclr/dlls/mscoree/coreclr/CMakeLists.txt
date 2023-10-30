@@ -35,7 +35,7 @@ else(CLR_CMAKE_HOST_WIN32)
     set(EXPORTS_FILE ${CMAKE_CURRENT_BINARY_DIR}/coreclr.exports)
     generate_exports_file(${DEF_SOURCES} ${EXPORTS_FILE})
 
-    if(CLR_CMAKE_TARGET_LINUX OR CLR_CMAKE_TARGET_FREEBSD OR CLR_CMAKE_TARGET_NETBSD OR CLR_CMAKE_TARGET_SUNOS)
+    if(CLR_CMAKE_TARGET_LINUX OR CLR_CMAKE_TARGET_FREEBSD OR CLR_CMAKE_TARGET_NETBSD OR CLR_CMAKE_TARGET_SUNOS OR CLR_CMAKE_HOST_HAIKU)
         # This option is necessary to ensure that the overloaded delete operator defined inside
         # of the utilcode will be used instead of the standard library delete operator.
         add_linker_flag("-Wl,-Bsymbolic")
@@ -48,7 +48,7 @@ else(CLR_CMAKE_HOST_WIN32)
         # These options are used to force every object to be included even if it's unused.
         set(START_WHOLE_ARCHIVE -Wl,--whole-archive)
         set(END_WHOLE_ARCHIVE -Wl,--no-whole-archive)
-    endif(CLR_CMAKE_TARGET_LINUX OR CLR_CMAKE_TARGET_FREEBSD OR CLR_CMAKE_TARGET_NETBSD OR CLR_CMAKE_TARGET_SUNOS)
+    endif(CLR_CMAKE_TARGET_LINUX OR CLR_CMAKE_TARGET_FREEBSD OR CLR_CMAKE_TARGET_NETBSD OR CLR_CMAKE_TARGET_SUNOS OR CLR_CMAKE_HOST_HAIKU)
 
     if(CLR_CMAKE_TARGET_OSX)
         # These options are used to force every object to be included even if it's unused.
@@ -108,6 +108,7 @@ set(CORECLR_LIBRARIES
     System.Globalization.Native-Static
     interop
     coreclrminipal
+    gc_pal
 )
 
 if(CLR_CMAKE_TARGET_WIN32)
@@ -146,6 +147,10 @@ elseif(CLR_CMAKE_TARGET_SUNOS)
     list(APPEND CORECLR_LIBRARIES
         socket
     )
+elseif(CLR_CMAKE_TARGET_HAIKU)
+    list(APPEND CORECLR_LIBRARIES
+        network
+    )
 endif(CLR_CMAKE_TARGET_LINUX)
 
 if(FEATURE_PERFTRACING)
@@ -166,14 +171,27 @@ if(FEATURE_MERGE_JIT_AND_ENGINE)
     set(CLRJIT_STATIC clrjit_static)
 endif(FEATURE_MERGE_JIT_AND_ENGINE)
 
+if (CLR_CMAKE_TARGET_OSX)
+    include(CMakeFindFrameworks)
+    find_library(FOUNDATION Foundation REQUIRED)
+endif()
+
 target_sources(coreclr PUBLIC $<TARGET_OBJECTS:cee_wks_core>)
-target_link_libraries(coreclr PUBLIC ${CORECLR_LIBRARIES} ${CLRJIT_STATIC} cee_wks)
+target_link_libraries(coreclr PUBLIC ${CORECLR_LIBRARIES} ${CLRJIT_STATIC} cee_wks ${FOUNDATION})
 target_sources(coreclr_static PUBLIC $<TARGET_OBJECTS:cee_wks_core>)
-target_link_libraries(coreclr_static PUBLIC ${CORECLR_LIBRARIES} clrjit_static cee_wks_mergeable)
+target_link_libraries(coreclr_static PUBLIC ${CORECLR_LIBRARIES} clrjit_static cee_wks_mergeable ${FOUNDATION})
 target_compile_definitions(coreclr_static PUBLIC CORECLR_EMBEDDED)
 
 if(CLR_CMAKE_TARGET_WIN32)
     set(CLRDEBUGINFO_RESOURCE_PATH ${CMAKE_CURRENT_BINARY_DIR}/clr_debug_resource.bin)
+
+    if(CLR_CMAKE_TARGET_ARCH_AMD64)
+        set(CLRDEBUGINFO_RESOURCE_NAME CLRDEBUGINFOWINDOWSAMD64)
+    elseif(CLR_CMAKE_TARGET_ARCH_I386)
+        set(CLRDEBUGINFO_RESOURCE_NAME CLRDEBUGINFOWINDOWSX86)
+    elseif(CLR_CMAKE_TARGET_ARCH_ARM64)
+        set(CLRDEBUGINFO_RESOURCE_NAME CLRDEBUGINFOWINDOWSARM64)
+    endif(CLR_CMAKE_TARGET_ARCH_AMD64)
 
     add_custom_target(
         clr_debug_resources
@@ -192,67 +210,6 @@ if(CLR_CMAKE_TARGET_WIN32)
 
     add_dependencies(coreclr clr_debug_resources)
     add_dependencies(coreclr_static clr_debug_resources)
-
-    # Add dac table & debug resource to coreclr
-    get_include_directories(INC_DIR)
-    get_compile_definitions(PREPROCESS_DEFINITIONS)
-    list(APPEND INC_DIR -I${CLR_DIR}/vm -I${CLR_DIR}/vm/${ARCH_SOURCES_DIR} -I${CLR_DIR}/debug/ee -I${CLR_DIR}/gc)
-    list(APPEND PREPROCESS_DEFINITIONS -DDACCESS_COMPILE)
-
-    if (CLR_CMAKE_HOST_ARCH_AMD64)
-        list(APPEND PREPROCESS_DEFINITIONS -DTARGET_AMD64)
-    elseif (CLR_CMAKE_HOST_ARCH_ARM64)
-        list(APPEND PREPROCESS_DEFINITIONS -DTARGET_ARM64)
-    elseif (CLR_CMAKE_HOST_ARCH_ARM)
-        list(APPEND PREPROCESS_DEFINITIONS -DTARGET_ARM)
-    elseif (CLR_CMAKE_HOST_ARCH_I386)
-        list(APPEND PREPROCESS_DEFINITIONS -DTARGET_X86)
-    else()
-        clr_unknown_arch()
-    endif()
-
-    # dacess.h defines this constant
-    # The value is a constract between the DAC and the runtime
-    set (DACCESS_TABLE_RESOURCE COREXTERNALDATAACCESSRESOURCE)
-
-    add_custom_command(
-        DEPENDS coreclr mscordaccore mscordbi ${CLR_DIR}/debug/daccess/daccess.cpp
-        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_CFG_INTDIR}/inject_debug_resources_coreclr.timestamp
-        COMMAND ${CMAKE_CXX_COMPILER} /P /EP /TP ${PREPROCESS_DEFINITIONS} ${INC_DIR} /Fi${CMAKE_CURRENT_BINARY_DIR}/daccess.i  ${CLR_DIR}/debug/daccess/daccess.cpp
-
-        # make and inject dactable for coreclr
-        COMMAND cmd /c ${CLR_REPO_ROOT_DIR}/dotnet.cmd exec ${CMAKE_INSTALL_PREFIX}/DacTableGen/DacTableGen.dll /dac:${CMAKE_CURRENT_BINARY_DIR}/daccess.i /pdb:$<TARGET_PDB_FILE:coreclr> /dll:$<TARGET_FILE:coreclr> /bin:${CMAKE_CURRENT_BINARY_DIR}/wks.bin
-        COMMAND cmd /c ${CLR_REPO_ROOT_DIR}/dotnet.cmd exec ${CMAKE_INSTALL_PREFIX}/InjectResource/InjectResource.dll --bin ${CMAKE_CURRENT_BINARY_DIR}/wks.bin --image $<TARGET_FILE:coreclr> --name ${DACCESS_TABLE_RESOURCE}
-
-        COMMAND ${CMAKE_COMMAND} -E touch ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_CFG_INTDIR}/inject_debug_resources_coreclr.timestamp
-        COMMENT Add dactable to coreclr
-    )
-
-    if(NOT DEFINED CLR_CROSS_COMPONENTS_BUILD)
-        add_custom_target(inject_debug_resources_coreclr ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_CFG_INTDIR}/inject_debug_resources_coreclr.timestamp)
-        add_dependencies(runtime inject_debug_resources_coreclr)
-    endif()
-
-    add_custom_command(
-        DEPENDS singlefilehost mscordaccore mscordbi ${CLR_DIR}/debug/daccess/daccess.cpp
-        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_CFG_INTDIR}/inject_debug_resources_singlefilehost.timestamp
-        COMMAND ${CMAKE_CXX_COMPILER} /P /EP /TP ${PREPROCESS_DEFINITIONS} ${INC_DIR} /Fi${CMAKE_CURRENT_BINARY_DIR}/daccess.i  ${CLR_DIR}/debug/daccess/daccess.cpp
-
-        # make and inject dactable for singlefilehost
-        COMMAND cmd /c ${CLR_REPO_ROOT_DIR}/dotnet.cmd exec ${CMAKE_INSTALL_PREFIX}/DacTableGen/DacTableGen.dll /dac:${CMAKE_CURRENT_BINARY_DIR}/daccess.i /pdb:$<TARGET_PDB_FILE:singlefilehost> /dll:$<TARGET_FILE:singlefilehost> /bin:${CMAKE_CURRENT_BINARY_DIR}/sfh.bin
-        COMMAND cmd /c ${CLR_REPO_ROOT_DIR}/dotnet.cmd exec ${CMAKE_INSTALL_PREFIX}/InjectResource/InjectResource.dll --bin ${CMAKE_CURRENT_BINARY_DIR}/sfh.bin --image $<TARGET_FILE:singlefilehost> --name ${DACCESS_TABLE_RESOURCE}
-
-        COMMAND ${CMAKE_COMMAND} -E touch ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_CFG_INTDIR}/inject_debug_resources_singlefilehost.timestamp
-        COMMENT Add dactable to singlefilehost
-    )
-
-    if(NOT DEFINED CLR_CROSS_COMPONENTS_BUILD)
-        add_custom_target(inject_debug_resources_singlefilehost ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_CFG_INTDIR}/inject_debug_resources_singlefilehost.timestamp)
-        add_dependencies(runtime inject_debug_resources_singlefilehost)
-    endif()
-else()
-    add_custom_target(inject_debug_resources_coreclr DEPENDS coreclr)
-    add_custom_target(inject_debug_resources_singlefilehost DEPENDS singlefilehost)
 endif(CLR_CMAKE_TARGET_WIN32)
 
 # add the install targets

@@ -18,35 +18,35 @@
 #include "varint.h"
 #include "regdisplay.h"
 #include "StackFrameIterator.h"
+#include "interoplibinterface.h"
 
 #include "thread.h"
-#include "RWLock.h"
 #include "threadstore.h"
 #include "threadstore.inl"
 #include "thread.inl"
 
-EXTERN_C REDHAWK_API void __cdecl RhpCollect(uint32_t uGeneration, uint32_t uMode)
+EXTERN_C NATIVEAOT_API void __cdecl RhpCollect(uint32_t uGeneration, uint32_t uMode, UInt32_BOOL lowMemoryP)
 {
     // This must be called via p/invoke rather than RuntimeImport to make the stack crawlable.
 
     Thread * pCurThread = ThreadStore::GetCurrentThread();
 
-    pCurThread->SetupHackPInvokeTunnel();
+    pCurThread->DeferTransitionFrame();
     pCurThread->DisablePreemptiveMode();
 
     ASSERT(!pCurThread->IsDoNotTriggerGcSet());
-    GCHeapUtilities::GetGCHeap()->GarbageCollect(uGeneration, FALSE, uMode);
+    GCHeapUtilities::GetGCHeap()->GarbageCollect(uGeneration, lowMemoryP, uMode);
 
     pCurThread->EnablePreemptiveMode();
 }
 
-EXTERN_C REDHAWK_API int64_t __cdecl RhpGetGcTotalMemory()
+EXTERN_C NATIVEAOT_API int64_t __cdecl RhpGetGcTotalMemory()
 {
     // This must be called via p/invoke rather than RuntimeImport to make the stack crawlable.
 
     Thread * pCurThread = ThreadStore::GetCurrentThread();
 
-    pCurThread->SetupHackPInvokeTunnel();
+    pCurThread->DeferTransitionFrame();
     pCurThread->DisablePreemptiveMode();
 
     int64_t ret = GCHeapUtilities::GetGCHeap()->GetTotalBytesInUse();
@@ -56,12 +56,12 @@ EXTERN_C REDHAWK_API int64_t __cdecl RhpGetGcTotalMemory()
     return ret;
 }
 
-EXTERN_C REDHAWK_API int32_t __cdecl RhpStartNoGCRegion(int64_t totalSize, UInt32_BOOL hasLohSize, int64_t lohSize, UInt32_BOOL disallowFullBlockingGC)
+EXTERN_C NATIVEAOT_API int32_t __cdecl RhpStartNoGCRegion(int64_t totalSize, UInt32_BOOL hasLohSize, int64_t lohSize, UInt32_BOOL disallowFullBlockingGC)
 {
     Thread *pCurThread = ThreadStore::GetCurrentThread();
     ASSERT(!pCurThread->IsCurrentThreadInCooperativeMode());
 
-    pCurThread->SetupHackPInvokeTunnel();
+    pCurThread->DeferTransitionFrame();
     pCurThread->DisablePreemptiveMode();
 
     int result = GCHeapUtilities::GetGCHeap()->StartNoGCRegion(totalSize, hasLohSize, lohSize, disallowFullBlockingGC);
@@ -71,7 +71,7 @@ EXTERN_C REDHAWK_API int32_t __cdecl RhpStartNoGCRegion(int64_t totalSize, UInt3
     return result;
 }
 
-EXTERN_C REDHAWK_API int32_t __cdecl RhpEndNoGCRegion()
+EXTERN_C NATIVEAOT_API int32_t __cdecl RhpEndNoGCRegion()
 {
     ASSERT(!ThreadStore::GetCurrentThread()->IsCurrentThreadInCooperativeMode());
 
@@ -80,14 +80,14 @@ EXTERN_C REDHAWK_API int32_t __cdecl RhpEndNoGCRegion()
 
 COOP_PINVOKE_HELPER(void, RhSuppressFinalize, (OBJECTREF refObj))
 {
-    if (!refObj->get_EEType()->HasFinalizer())
+    if (!refObj->GetMethodTable()->HasFinalizer())
         return;
     GCHeapUtilities::GetGCHeap()->SetFinalizationRun(refObj);
 }
 
 COOP_PINVOKE_HELPER(FC_BOOL_RET, RhReRegisterForFinalize, (OBJECTREF refObj))
 {
-    if (!refObj->get_EEType()->HasFinalizer())
+    if (!refObj->GetMethodTable()->HasFinalizer())
         FC_RETURN_BOOL(true);
     FC_RETURN_BOOL(GCHeapUtilities::GetGCHeap()->RegisterForFinalization(-1, refObj));
 }
@@ -107,6 +107,17 @@ COOP_PINVOKE_HELPER(int32_t, RhGetGeneration, (OBJECTREF obj))
     return GCHeapUtilities::GetGCHeap()->WhichGeneration(obj);
 }
 
+COOP_PINVOKE_HELPER(int64_t, RhGetGenerationSize, (int32_t gen))
+{
+    return (int64_t)(GCHeapUtilities::GetGCHeap()->GetLastGCGenerationSize(gen));
+}
+
+COOP_PINVOKE_HELPER(int64_t, RhGetLastGCPercentTimeInGC, ())
+{
+    return GCHeapUtilities::GetGCHeap()->GetLastGCPercentTimeInGC();
+}
+
+
 COOP_PINVOKE_HELPER(int32_t, RhGetGcLatencyMode, ())
 {
     return GCHeapUtilities::GetGCHeap()->GetGcLatencyMode();
@@ -115,6 +126,11 @@ COOP_PINVOKE_HELPER(int32_t, RhGetGcLatencyMode, ())
 COOP_PINVOKE_HELPER(int32_t, RhSetGcLatencyMode, (int32_t newLatencyMode))
 {
     return GCHeapUtilities::GetGCHeap()->SetGcLatencyMode(newLatencyMode);
+}
+
+COOP_PINVOKE_HELPER(FC_BOOL_RET, RhIsPromoted, (OBJECTREF obj))
+{
+    FC_RETURN_BOOL(GCHeapUtilities::GetGCHeap()->IsPromoted(obj));
 }
 
 COOP_PINVOKE_HELPER(FC_BOOL_RET, RhIsServerGc, ())
@@ -131,6 +147,13 @@ COOP_PINVOKE_HELPER(void, RhUnregisterGcCallout, (GcRestrictedCalloutKind eKind,
 {
     RestrictedCallouts::UnregisterGcCallout(eKind, pCallout);
 }
+
+#ifdef FEATURE_OBJCMARSHAL
+COOP_PINVOKE_HELPER(FC_BOOL_RET, RhRegisterObjectiveCMarshalBeginEndCallback, (void * pCallback))
+{
+    FC_RETURN_BOOL(ObjCMarshalNative::RegisterBeginEndCallback(pCallback));
+}
+#endif
 
 COOP_PINVOKE_HELPER(int32_t, RhGetLohCompactionMode, ())
 {
@@ -287,7 +310,38 @@ COOP_PINVOKE_HELPER(int64_t, RhGetTotalAllocatedBytes, ())
     return current_high;
 }
 
-EXTERN_C REDHAWK_API int64_t __cdecl RhGetTotalAllocatedBytesPrecise()
+using EnumerateConfigurationValuesCallback = void (*)(void* context, void* name, void* publicKey, GCConfigurationType type, int64_t data);
+
+EXTERN_C NATIVEAOT_API void __cdecl RhEnumerateConfigurationValues(void* configurationContext, EnumerateConfigurationValuesCallback callback)
+{
+    IGCHeap* pHeap = GCHeapUtilities::GetGCHeap();
+    pHeap->EnumerateConfigurationValues(configurationContext, callback);
+}
+
+GCHeapHardLimitInfo g_gcHeapHardLimitInfo;
+bool g_gcHeapHardLimitInfoSpecified = false;
+
+EXTERN_C NATIVEAOT_API void __cdecl RhRefreshMemoryLimit(GCHeapHardLimitInfo heapHardLimitInfo)
+{
+    IGCHeap* pHeap = GCHeapUtilities::GetGCHeap();
+    g_gcHeapHardLimitInfo = heapHardLimitInfo;
+    g_gcHeapHardLimitInfoSpecified = true;
+    pHeap->RefreshMemoryLimit();
+}
+
+EXTERN_C NATIVEAOT_API uint64_t __cdecl RhGetGenerationBudget(int generation)
+{
+    IGCHeap* pHeap = GCHeapUtilities::GetGCHeap();
+    return pHeap->GetGenerationBudget(generation);
+}
+
+EXTERN_C NATIVEAOT_API void __cdecl RhEnableNoGCRegionCallback(NoGCRegionCallbackFinalizerWorkItem* pCallback, int64_t totalSize)
+{
+    IGCHeap* pHeap = GCHeapUtilities::GetGCHeap();
+    pHeap->EnableNoGCRegionCallback(pCallback, totalSize);
+}
+
+EXTERN_C NATIVEAOT_API int64_t __cdecl RhGetTotalAllocatedBytesPrecise()
 {
     int64_t allocated;
 
@@ -312,11 +366,11 @@ EXTERN_C REDHAWK_API int64_t __cdecl RhGetTotalAllocatedBytesPrecise()
 
 extern Object* GcAllocInternal(MethodTable* pEEType, uint32_t uFlags, uintptr_t cbSize, Thread* pThread);
 
-EXTERN_C REDHAWK_API void RhAllocateNewArray(MethodTable* pArrayEEType, uint32_t numElements, uint32_t flags, Array** pResult)
+EXTERN_C NATIVEAOT_API void RhAllocateNewArray(MethodTable* pArrayEEType, uint32_t numElements, uint32_t flags, Array** pResult)
 {
     Thread* pThread = ThreadStore::GetCurrentThread();
 
-    pThread->SetupHackPInvokeTunnel();
+    pThread->DeferTransitionFrame();
     pThread->DisablePreemptiveMode();
 
     ASSERT(!pThread->IsDoNotTriggerGcSet());
@@ -326,11 +380,11 @@ EXTERN_C REDHAWK_API void RhAllocateNewArray(MethodTable* pArrayEEType, uint32_t
     pThread->EnablePreemptiveMode();
 }
 
-EXTERN_C REDHAWK_API void RhAllocateNewObject(MethodTable* pEEType, uint32_t flags, Object** pResult)
+EXTERN_C NATIVEAOT_API void RhAllocateNewObject(MethodTable* pEEType, uint32_t flags, Object** pResult)
 {
     Thread* pThread = ThreadStore::GetCurrentThread();
 
-    pThread->SetupHackPInvokeTunnel();
+    pThread->DeferTransitionFrame();
     pThread->DisablePreemptiveMode();
 
     ASSERT(!pThread->IsDoNotTriggerGcSet());
@@ -338,4 +392,29 @@ EXTERN_C REDHAWK_API void RhAllocateNewObject(MethodTable* pEEType, uint32_t fla
     *pResult = GcAllocInternal(pEEType, flags, 0, pThread);
 
     pThread->EnablePreemptiveMode();
+}
+
+COOP_PINVOKE_HELPER(int64_t, RhGetTotalPauseDuration, ())
+{
+    return GCHeapUtilities::GetGCHeap()->GetTotalPauseDuration();
+}
+
+COOP_PINVOKE_HELPER(void, RhRegisterForGCReporting, (GCFrameRegistration* pRegistration))
+{
+    Thread* pThread = ThreadStore::GetCurrentThread();
+
+    ASSERT(pRegistration->m_pThread == NULL);
+    pRegistration->m_pThread = pThread;
+
+    pThread->PushGCFrameRegistration(pRegistration);
+}
+
+COOP_PINVOKE_HELPER(void, RhUnregisterForGCReporting, (GCFrameRegistration* pRegistration))
+{
+    Thread* pThread = pRegistration->m_pThread;
+    if (pThread == NULL)
+        return;
+
+    ASSERT(pThread == ThreadStore::GetCurrentThread());
+    pThread->PopGCFrameRegistration(pRegistration);
 }

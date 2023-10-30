@@ -79,20 +79,15 @@ namespace System.IO.Tests
 
                 local.Value = 42;
 
-                ExecutionContext.SuppressFlow();
-                try
+                using (ExecutionContext.SuppressFlow())
                 {
                     watcher1.EnableRaisingEvents = true;
                 }
-                finally
-                {
-                    ExecutionContext.RestoreFlow();
-                }
 
-                    File.Create(fileName).Dispose();
-                    tcs1.Task.Wait(WaitForExpectedEventTimeout);
+                File.Create(fileName).Dispose();
+                tcs1.Task.Wait(WaitForExpectedEventTimeout);
 
-                    Assert.Equal(0, tcs1.Task.Result);
+                Assert.Equal(0, tcs1.Task.Result);
            }
         }
 
@@ -113,9 +108,9 @@ namespace System.IO.Tests
                 watcher2.Error += OnError;
                 watcher3.Error += OnError;
 
-                AutoResetEvent autoResetEvent1 = WatchCreated(watcher1, new[] { fileName }).EventOccured;
-                AutoResetEvent autoResetEvent2 = WatchCreated(watcher2, new[] { fileName }).EventOccured;
-                AutoResetEvent autoResetEvent3 = WatchCreated(watcher3, new[] { fileName }).EventOccured;
+                AutoResetEvent autoResetEvent1 = WatchCreated(watcher1, new[] { fileName }).EventOccurred;
+                AutoResetEvent autoResetEvent2 = WatchCreated(watcher2, new[] { fileName }).EventOccurred;
+                AutoResetEvent autoResetEvent3 = WatchCreated(watcher3, new[] { fileName }).EventOccurred;
 
                 watcher1.EnableRaisingEvents = true;
                 watcher2.EnableRaisingEvents = true;
@@ -148,8 +143,8 @@ namespace System.IO.Tests
                 string fileName1 = Path.Combine(dir1, "file");
                 string fileName2 = Path.Combine(dir2, "file");
 
-                AutoResetEvent autoResetEvent1 = WatchCreated(watcher1, new[] { fileName1 }).EventOccured;
-                AutoResetEvent autoResetEvent2 = WatchCreated(watcher2, new[] { fileName2 }).EventOccured;
+                AutoResetEvent autoResetEvent1 = WatchCreated(watcher1, new[] { fileName1 }).EventOccurred;
+                AutoResetEvent autoResetEvent2 = WatchCreated(watcher2, new[] { fileName2 }).EventOccurred;
 
                 watcher1.EnableRaisingEvents = true;
                 watcher2.EnableRaisingEvents = true;
@@ -182,7 +177,7 @@ namespace System.IO.Tests
                 {
                     watchers[i] = new FileSystemWatcher(TestDirectory);
                     watchers[i].Filter = Path.GetFileName(fileName);
-                    autoResetEvents[i] = WatchCreated(watchers[i], new[] { fileName }).EventOccured;
+                    autoResetEvents[i] = WatchCreated(watchers[i], new[] { fileName }).EventOccurred;
                     watchers[i].EnableRaisingEvents = true;
                 }
 
@@ -217,7 +212,7 @@ namespace System.IO.Tests
                     {
                         watchers1[i] = new FileSystemWatcher(TestDirectory);
                         watchers1[i].Filter = Path.GetFileName(fileName);
-                        autoResetEvents1[i] = WatchCreated(watchers1[i], new[] { fileName }).EventOccured;
+                        autoResetEvents1[i] = WatchCreated(watchers1[i], new[] { fileName }).EventOccurred;
                         watchers1[i].EnableRaisingEvents = true;
                     }
 
@@ -245,9 +240,9 @@ namespace System.IO.Tests
             using (var watcher2 = new FileSystemWatcher(TestDirectory, Path.GetFileName(file)))
             using (var watcher3 = new FileSystemWatcher(TestDirectory, Path.GetFileName(otherFile)))
             {
-                AutoResetEvent autoResetEvent1 = WatchChanged(watcher1, new[] { Path.Combine(TestDirectory, "apple") }).EventOccured;
-                AutoResetEvent autoResetEvent2 = WatchChanged(watcher2, new[] { Path.Combine(TestDirectory, "apple") }).EventOccured;
-                AutoResetEvent autoResetEvent3 = WatchChanged(watcher3, new[] { Path.Combine(TestDirectory, "pear") }).EventOccured;
+                AutoResetEvent autoResetEvent1 = WatchChanged(watcher1, new[] { Path.Combine(TestDirectory, "apple") }).EventOccurred;
+                AutoResetEvent autoResetEvent2 = WatchChanged(watcher2, new[] { Path.Combine(TestDirectory, "apple") }).EventOccurred;
+                AutoResetEvent autoResetEvent3 = WatchChanged(watcher3, new[] { Path.Combine(TestDirectory, "pear") }).EventOccurred;
 
                 watcher1.Error += OnError;
                 watcher2.Error += OnError;
@@ -295,9 +290,9 @@ namespace System.IO.Tests
                 watcher2.Error += OnError;
                 watcher3.Error += OnError;
 
-                AutoResetEvent autoResetEvent1 = WatchDeleted(watcher1, new[] { fileName }, _output).EventOccured;
-                AutoResetEvent autoResetEvent2 = WatchDeleted(watcher2, new[] { fileName }, _output).EventOccured;
-                AutoResetEvent autoResetEvent3 = WatchDeleted(watcher3, new[] { fileName }, _output).EventOccured;
+                AutoResetEvent autoResetEvent1 = WatchDeleted(watcher1, new[] { fileName }, _output).EventOccurred;
+                AutoResetEvent autoResetEvent2 = WatchDeleted(watcher2, new[] { fileName }, _output).EventOccurred;
+                AutoResetEvent autoResetEvent3 = WatchDeleted(watcher3, new[] { fileName }, _output).EventOccurred;
 
                 watcher1.EnableRaisingEvents = true;
                 watcher2.EnableRaisingEvents = true;
@@ -327,8 +322,8 @@ namespace System.IO.Tests
                 string filePath = file;
                 string filePathRenamed = file + "_renamed";
 
-                AutoResetEvent autoResetEvent1 = WatchRenamed(watcher1, new[] { filePathRenamed }, _output).EventOccured;
-                AutoResetEvent autoResetEvent2 = WatchRenamed(watcher2, new[] { filePathRenamed }, _output).EventOccured;
+                AutoResetEvent autoResetEvent1 = WatchRenamed(watcher1, new[] { filePathRenamed }, _output).EventOccurred;
+                AutoResetEvent autoResetEvent2 = WatchRenamed(watcher2, new[] { filePathRenamed }, _output).EventOccurred;
 
                 watcher1.Error += OnError;
                 watcher2.Error += OnError;

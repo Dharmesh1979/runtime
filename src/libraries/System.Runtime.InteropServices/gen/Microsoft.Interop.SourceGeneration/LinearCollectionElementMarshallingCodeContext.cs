@@ -1,9 +1,11 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
+using System;
+
 namespace Microsoft.Interop
 {
-    internal sealed class LinearCollectionElementMarshallingCodeContext : StubCodeContext
+    internal sealed record LinearCollectionElementMarshallingCodeContext : StubCodeContext
     {
         private readonly string _managedSpanIdentifier;
         private readonly string _nativeSpanIdentifier;
@@ -32,6 +34,8 @@ namespace Microsoft.Interop
             _managedSpanIdentifier = managedSpanIdentifier;
             _nativeSpanIdentifier = nativeSpanIdentifier;
             ParentContext = parentContext;
+            Direction = ParentContext.Direction;
+            CodeEmitOptions = ParentContext.CodeEmitOptions;
         }
 
         /// <summary>

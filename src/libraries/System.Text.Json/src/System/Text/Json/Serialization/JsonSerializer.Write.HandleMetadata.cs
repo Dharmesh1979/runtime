@@ -9,10 +9,10 @@ namespace System.Text.Json
     public static partial class JsonSerializer
     {
         // Pre-encoded metadata properties.
-        internal static readonly JsonEncodedText s_metadataId = JsonEncodedText.Encode("$id", encoder: null);
-        internal static readonly JsonEncodedText s_metadataRef = JsonEncodedText.Encode("$ref", encoder: null);
-        internal static readonly JsonEncodedText s_metadataType = JsonEncodedText.Encode("$type", encoder: null);
-        internal static readonly JsonEncodedText s_metadataValues = JsonEncodedText.Encode("$values", encoder: null);
+        internal static readonly JsonEncodedText s_metadataId = JsonEncodedText.Encode(IdPropertyName, encoder: null);
+        internal static readonly JsonEncodedText s_metadataRef = JsonEncodedText.Encode(RefPropertyName, encoder: null);
+        internal static readonly JsonEncodedText s_metadataType = JsonEncodedText.Encode(TypePropertyName, encoder: null);
+        internal static readonly JsonEncodedText s_metadataValues = JsonEncodedText.Encode(ValuesPropertyName, encoder: null);
 
         internal static MetadataPropertyName WriteMetadataForObject(
             JsonConverter jsonConverter,
@@ -32,16 +32,25 @@ namespace System.Text.Json
                 state.NewReferenceId = null;
             }
 
-            if (state.PolymorphicTypeDiscriminator is string typeDiscriminatorId)
+            if (state.PolymorphicTypeDiscriminator is object discriminator)
             {
-                Debug.Assert(state.Parent.JsonPropertyInfo!.JsonTypeInfo.PolymorphicTypeResolver != null);
+                Debug.Assert(state.PolymorphicTypeResolver != null);
 
                 JsonEncodedText propertyName =
-                    state.Parent.JsonPropertyInfo.JsonTypeInfo.PolymorphicTypeResolver.CustomTypeDiscriminatorPropertyNameJsonEncoded is JsonEncodedText customPropertyName
+                    state.PolymorphicTypeResolver.CustomTypeDiscriminatorPropertyNameJsonEncoded is JsonEncodedText customPropertyName
                     ? customPropertyName
                     : s_metadataType;
 
-                writer.WriteString(propertyName, typeDiscriminatorId);
+                if (discriminator is string stringId)
+                {
+                    writer.WriteString(propertyName, stringId);
+                }
+                else
+                {
+                    Debug.Assert(discriminator is int);
+                    writer.WriteNumber(propertyName, (int)discriminator);
+                }
+
                 writtenMetadata |= MetadataPropertyName.Type;
                 state.PolymorphicTypeDiscriminator = null;
             }
@@ -79,7 +88,9 @@ namespace System.Text.Json
                 writer.WriteString(s_metadataRef, referenceId);
                 writer.WriteEndObject();
 
-                state.PolymorphicTypeDiscriminator = null; // clear out any polymorphism state.
+                // clear out any polymorphism state.
+                state.PolymorphicTypeDiscriminator = null;
+                state.PolymorphicTypeResolver = null;
             }
             else
             {

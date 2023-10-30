@@ -22,15 +22,13 @@ namespace Microsoft.DotNet.CoreSetup.Test.HostActivation
         [Fact]
         public void Breadcrumb_thread_finishes_when_app_closes_normally()
         {
-            var fixture = sharedTestState.PortableAppFixture.Copy();
+            var fixture = sharedTestState.PortableAppFixture;
             var dotnet = fixture.BuiltDotnet;
             var appDll = fixture.TestProject.AppDll;
 
             dotnet.Exec(appDll)
                 .EnvironmentVariable("CORE_BREADCRUMBS", sharedTestState.BreadcrumbLocation)
-                .EnvironmentVariable("COREHOST_TRACE", "1")
-                .CaptureStdOut()
-                .CaptureStdErr()
+                .EnableTracingAndCaptureOutputs()
                 .Execute()
                 .Should().Pass()
                 .And.HaveStdOutContaining("Hello World")
@@ -40,24 +38,22 @@ namespace Microsoft.DotNet.CoreSetup.Test.HostActivation
         [Fact]
         public void Breadcrumb_thread_does_not_finish_when_app_has_unhandled_exception()
         {
-            var fixture = sharedTestState.PortableAppWithExceptionFixture.Copy();
+            var fixture = sharedTestState.PortableAppFixture;
             var dotnet = fixture.BuiltDotnet;
             var appDll = fixture.TestProject.AppDll;
 
-            dotnet.Exec(appDll)
+            dotnet.Exec(appDll, "throw_exception")
                 .EnvironmentVariable("CORE_BREADCRUMBS", sharedTestState.BreadcrumbLocation)
-                .EnvironmentVariable("COREHOST_TRACE", "1")
-                .CaptureStdOut()
-                .CaptureStdErr()
-                .Execute(fExpectedToFail: true)
+                .EnableTracingAndCaptureOutputs()
+                .Execute(expectedToFail: true)
                 .Should().Fail()
-                .And.HaveStdErrContaining("Unhandled exception. System.Exception: Goodbye World")
+                .And.HaveStdErrContaining("Unhandled exception.")
+                .And.HaveStdErrContaining("System.Exception: Goodbye World")
                 .And.NotHaveStdErrContaining("Done waiting for breadcrumb thread to exit...");
         }
 
         private class SdkResolutionFixture
         {
-            private readonly string _builtDotnet;
             private readonly TestProjectFixture _fixture;
 
             public DotNetCli Dotnet { get; }
@@ -90,8 +86,7 @@ namespace Microsoft.DotNet.CoreSetup.Test.HostActivation
 
             public SdkResolutionFixture(SharedTestState state)
             {
-                _builtDotnet = Path.Combine(TestArtifact.TestArtifactsPath, "sharedFrameworkPublish");
-                Dotnet = new DotNetCli(_builtDotnet);
+                Dotnet = new DotNetCli(RepoDirectoriesProvider.Default.BuiltDotnet);
 
                 _fixture = state.HostApiInvokerAppFixture.Copy();
 
@@ -103,26 +98,46 @@ namespace Microsoft.DotNet.CoreSetup.Test.HostActivation
 
                 foreach (string sdk in ProgramFilesGlobalSdks)
                 {
-                    Directory.CreateDirectory(Path.Combine(ProgramFilesGlobalSdkDir, sdk));
+                    AddSdkDirectory(ProgramFilesGlobalSdkDir, sdk);
                 }
                 foreach (string sdk in SelfRegisteredGlobalSdks)
                 {
-                    Directory.CreateDirectory(Path.Combine(SelfRegisteredGlobalSdkDir, sdk));
+                    AddSdkDirectory(SelfRegisteredGlobalSdkDir, sdk);
                 }
                 foreach (string sdk in LocalSdks)
                 {
-                    Directory.CreateDirectory(Path.Combine(LocalSdkDir, sdk));
+                    AddSdkDirectory(LocalSdkDir, sdk);
                 }
+
+                // Empty SDK directory - this should not be recognized as a valid SDK directory
+                Directory.CreateDirectory(Path.Combine(LocalSdkDir, "9.9.9"));
 
                 foreach ((string fwName, string[] fwVersions) in ProgramFilesGlobalFrameworks)
                 {
                     foreach (string fwVersion in fwVersions)
-                        Directory.CreateDirectory(Path.Combine(ProgramFilesGlobalFrameworksDir, fwName, fwVersion));
+                        AddFrameworkDirectory(ProgramFilesGlobalFrameworksDir, fwName, fwVersion);
                 }
                 foreach ((string fwName, string[] fwVersions) in LocalFrameworks)
                 {
                     foreach (string fwVersion in fwVersions)
-                        Directory.CreateDirectory(Path.Combine(LocalFrameworksDir, fwName, fwVersion));
+                        AddFrameworkDirectory(LocalFrameworksDir, fwName, fwVersion);
+
+                    // Empty framework directory - this should not be recognized as a valid framework directory
+                    Directory.CreateDirectory(Path.Combine(LocalFrameworksDir, fwName, "9.9.9"));
+                }
+
+                static void AddSdkDirectory(string sdkDir, string version)
+                {
+                    string versionDir = Path.Combine(sdkDir, version);
+                    Directory.CreateDirectory(versionDir);
+                    File.WriteAllText(Path.Combine(versionDir, "dotnet.dll"), string.Empty);
+                }
+
+                static void AddFrameworkDirectory(string frameworkDir, string name, string version)
+                {
+                    string versionDir = Path.Combine(frameworkDir, name, version);
+                    Directory.CreateDirectory(versionDir);
+                    File.WriteAllText(Path.Combine(versionDir, $"{name}.deps.json"), string.Empty);
                 }
             }
         }
@@ -442,14 +457,12 @@ namespace Microsoft.DotNet.CoreSetup.Test.HostActivation
             var f = new SdkResolutionFixture(sharedTestState);
 
             f.Dotnet.Exec(f.AppDll, new[] { "hostfxr_get_dotnet_environment_info", "test_invalid_result_ptr" })
-            .EnvironmentVariable("COREHOST_TRACE", "1")
-            .CaptureStdOut()
-            .CaptureStdErr()
-            .Execute()
-            .Should().Pass()
-            // 0x80008081 (InvalidArgFailure)
-            .And.HaveStdOutContaining("hostfxr_get_dotnet_environment_info:Fail[-2147450751]")
-            .And.HaveStdErrContaining("hostfxr_get_dotnet_environment_info received an invalid argument: result should not be null.");
+                .EnableTracingAndCaptureOutputs()
+                .Execute()
+                .Should().Pass()
+                // 0x80008081 (InvalidArgFailure)
+                .And.HaveStdOutContaining("hostfxr_get_dotnet_environment_info:Fail[-2147450751]")
+                .And.HaveStdErrContaining("hostfxr_get_dotnet_environment_info received an invalid argument: result should not be null.");
         }
 
         [Fact]
@@ -458,14 +471,12 @@ namespace Microsoft.DotNet.CoreSetup.Test.HostActivation
             var f = new SdkResolutionFixture(sharedTestState);
 
             f.Dotnet.Exec(f.AppDll, new[] { "hostfxr_get_dotnet_environment_info", "test_invalid_reserved_ptr" })
-            .EnvironmentVariable("COREHOST_TRACE", "1")
-            .CaptureStdOut()
-            .CaptureStdErr()
-            .Execute()
-            .Should().Pass()
-            // 0x80008081 (InvalidArgFailure)
-            .And.HaveStdOutContaining("hostfxr_get_dotnet_environment_info:Fail[-2147450751]")
-            .And.HaveStdErrContaining("hostfxr_get_dotnet_environment_info received an invalid argument: reserved should be null.");
+                .EnableTracingAndCaptureOutputs()
+                .Execute()
+                .Should().Pass()
+                // 0x80008081 (InvalidArgFailure)
+                .And.HaveStdOutContaining("hostfxr_get_dotnet_environment_info:Fail[-2147450751]")
+                .And.HaveStdErrContaining("hostfxr_get_dotnet_environment_info received an invalid argument: reserved should be null.");
         }
 
         [Fact]
@@ -480,11 +491,26 @@ namespace Microsoft.DotNet.CoreSetup.Test.HostActivation
                 .Should().Pass();
         }
 
+        [Fact]
+        public void HostRuntimeContract_get_runtime_property()
+        {
+            var fixture = sharedTestState.HostApiInvokerAppFixture;
+
+            fixture.BuiltDotnet.Exec(fixture.TestProject.AppDll, "host_runtime_contract.get_runtime_property", "APP_CONTEXT_BASE_DIRECTORY", "RUNTIME_IDENTIFIER", "DOES_NOT_EXIST", "ENTRY_ASSEMBLY_NAME")
+                .CaptureStdOut()
+                .CaptureStdErr()
+                .Execute()
+                .Should().Pass()
+                .And.HaveStdOutContaining($"APP_CONTEXT_BASE_DIRECTORY = {Path.GetDirectoryName(fixture.TestProject.AppDll)}")
+                .And.HaveStdOutContaining($"RUNTIME_IDENTIFIER = {RepoDirectoriesProvider.Default.BuildRID}")
+                .And.HaveStdOutContaining($"DOES_NOT_EXIST = <none>")
+                .And.HaveStdOutContaining($"ENTRY_ASSEMBLY_NAME = {fixture.TestProject.AssemblyName}");
+        }
+
         public class SharedTestState : IDisposable
         {
             public TestProjectFixture HostApiInvokerAppFixture { get; }
             public TestProjectFixture PortableAppFixture { get; }
-            public TestProjectFixture PortableAppWithExceptionFixture { get; }
             public RepoDirectoriesProvider RepoDirectories { get; }
 
             public string BreadcrumbLocation { get; }
@@ -501,26 +527,20 @@ namespace Microsoft.DotNet.CoreSetup.Test.HostActivation
                     .EnsureRestored()
                     .PublishProject();
 
-                PortableAppWithExceptionFixture = new TestProjectFixture("PortableAppWithException", RepoDirectories)
-                    .EnsureRestored()
-                    .PublishProject();
-
                 if (!OperatingSystem.IsWindows())
                 {
+                    // On non-Windows breadcrumbs are only written if the breadcrumb directory already exists,
+                    // so we explicitly create a directory for breadcrumbs
                     BreadcrumbLocation = Path.Combine(
-                        PortableAppWithExceptionFixture.TestProject.OutputDirectory,
+                        PortableAppFixture.TestProject.OutputDirectory,
                         "opt",
                         "corebreadcrumbs");
                     Directory.CreateDirectory(BreadcrumbLocation);
 
                     // On non-Windows, we can't just P/Invoke to already loaded hostfxr, so copy it next to the app dll.
                     var fixture = HostApiInvokerAppFixture;
-                    var hostfxr = Path.Combine(
-                        fixture.BuiltDotnet.GreatestVersionHostFxrPath,
-                        RuntimeInformationExtensions.GetSharedLibraryFileNameForCurrentPlatform("hostfxr"));
-
                     FileUtils.CopyIntoDirectory(
-                        hostfxr,
+                        fixture.BuiltDotnet.GreatestVersionHostFxrFilePath,
                         Path.GetDirectoryName(fixture.TestProject.AppDll));
                 }
             }
@@ -529,7 +549,6 @@ namespace Microsoft.DotNet.CoreSetup.Test.HostActivation
             {
                 HostApiInvokerAppFixture.Dispose();
                 PortableAppFixture.Dispose();
-                PortableAppWithExceptionFixture.Dispose();
             }
         }
     }

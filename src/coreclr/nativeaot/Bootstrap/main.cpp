@@ -93,9 +93,7 @@ static char& __unbox_z = __stop___unbox;
 
 #endif // _MSC_VER
 
-extern "C" bool RhInitialize();
-extern "C" void RhpEnableConservativeStackReporting();
-extern "C" void RhpShutdown();
+extern "C" bool RhInitialize(bool isDll);
 extern "C" void RhSetRuntimeInitializationCallback(int (*fPtr)());
 
 extern "C" bool RhRegisterOSModule(void * pModule,
@@ -106,19 +104,25 @@ extern "C" bool RhRegisterOSModule(void * pModule,
 extern "C" void* PalGetModuleHandleFromPointer(void* pointer);
 
 extern "C" void GetRuntimeException();
-extern "C" void FailFast();
+extern "C" void RuntimeFailFast();
 extern "C" void AppendExceptionStackFrame();
 extern "C" void GetSystemArrayEEType();
 extern "C" void OnFirstChanceException();
 extern "C" void OnUnhandledException();
 extern "C" void IDynamicCastableIsInterfaceImplemented();
 extern "C" void IDynamicCastableGetInterfaceImplementation();
+#ifdef FEATURE_OBJCMARSHAL
+extern "C" void ObjectiveCMarshalTryGetTaggedMemory();
+extern "C" void ObjectiveCMarshalGetIsTrackedReferenceCallback();
+extern "C" void ObjectiveCMarshalGetOnEnteredFinalizerQueueCallback();
+extern "C" void ObjectiveCMarshalGetUnhandledExceptionPropagationHandler();
+#endif
 
 typedef void(*pfn)();
 
 static const pfn c_classlibFunctions[] = {
     &GetRuntimeException,
-    &FailFast,
+    &RuntimeFailFast,
     nullptr, // &UnhandledExceptionHandler,
     &AppendExceptionStackFrame,
     nullptr, // &CheckStaticClassConstruction,
@@ -127,6 +131,17 @@ static const pfn c_classlibFunctions[] = {
     &OnUnhandledException,
     &IDynamicCastableIsInterfaceImplemented,
     &IDynamicCastableGetInterfaceImplementation,
+#ifdef FEATURE_OBJCMARSHAL
+    &ObjectiveCMarshalTryGetTaggedMemory,
+    &ObjectiveCMarshalGetIsTrackedReferenceCallback,
+    &ObjectiveCMarshalGetOnEnteredFinalizerQueueCallback,
+    &ObjectiveCMarshalGetUnhandledExceptionPropagationHandler,
+#else
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+#endif
 };
 
 #ifndef _countof
@@ -135,26 +150,30 @@ static const pfn c_classlibFunctions[] = {
 
 extern "C" void InitializeModules(void* osModule, void ** modules, int count, void ** pClasslibFunctions, int nClasslibFunctions);
 
-#ifndef CORERT_DLL
-#define CORERT_ENTRYPOINT __managed__Main
+#ifndef NATIVEAOT_DLL
+#define NATIVEAOT_ENTRYPOINT __managed__Main
 #if defined(_WIN32)
 extern "C" int __managed__Main(int argc, wchar_t* argv[]);
 #else
 extern "C" int __managed__Main(int argc, char* argv[]);
 #endif
 #else
-#define CORERT_ENTRYPOINT __managed__Startup
+#define NATIVEAOT_ENTRYPOINT __managed__Startup
 extern "C" void __managed__Startup();
-#endif // !CORERT_DLL
+#endif // !NATIVEAOT_DLL
 
 static int InitializeRuntime()
 {
-    if (!RhInitialize())
+    if (!RhInitialize(
+#ifdef NATIVEAOT_DLL
+        /* isDll */ true
+#else
+        /* isDll */ false
+#endif
+        ))
         return -1;
 
-    // RhpEnableConservativeStackReporting();
-
-    void * osModule = PalGetModuleHandleFromPointer((void*)&CORERT_ENTRYPOINT);
+    void * osModule = PalGetModuleHandleFromPointer((void*)&NATIVEAOT_ENTRYPOINT);
 
     // TODO: pass struct with parameters instead of the large signature of RhRegisterOSModule
     if (!RhRegisterOSModule(
@@ -168,24 +187,15 @@ static int InitializeRuntime()
 
     InitializeModules(osModule, __modules_a, (int)((__modules_z - __modules_a)), (void **)&c_classlibFunctions, _countof(c_classlibFunctions));
 
-#ifdef CORERT_DLL
+#ifdef NATIVEAOT_DLL
     // Run startup method immediately for a native library
     __managed__Startup();
-#endif // CORERT_DLL
+#endif // NATIVEAOT_DLL
 
     return 0;
 }
 
-#ifndef CORERT_DLL
-
-#ifdef ENSURE_PRIMARY_STACK_SIZE
-__attribute__((noinline, optnone))
-static void EnsureStackSize(int stackSize)
-{
-    volatile char* s = (char*)_alloca(stackSize);
-    *s = 0;
-}
-#endif // ENSURE_PRIMARY_STACK_SIZE
+#ifndef NATIVEAOT_DLL
 
 #if defined(_WIN32)
 int __cdecl wmain(int argc, wchar_t* argv[])
@@ -193,24 +203,24 @@ int __cdecl wmain(int argc, wchar_t* argv[])
 int main(int argc, char* argv[])
 #endif
 {
-#ifdef ENSURE_PRIMARY_STACK_SIZE
-    // TODO: https://github.com/dotnet/runtimelab/issues/791
-    EnsureStackSize(1536 * 1024);
-#endif
-
     int initval = InitializeRuntime();
     if (initval != 0)
         return initval;
 
-    int retval = __managed__Main(argc, argv);
-
-    RhpShutdown();
-
-    return retval;
+    return __managed__Main(argc, argv);
 }
-#endif // !CORERT_DLL
 
-#ifdef CORERT_DLL
+#ifdef HAS_ADDRESS_SANITIZER
+// We need to build the bootstrapper as a single object file, to ensure
+// the linker can detect that we have ASAN components early enough in the build.
+// Include our asan support sources for executable projects here to ensure they
+// are compiled into the bootstrapper object.
+#include "minipal/asansupport.cpp"
+#endif // HAS_ADDRESS_SANITIZER
+
+#endif // !NATIVEAOT_DLL
+
+#ifdef NATIVEAOT_DLL
 static struct InitializeRuntimePointerHelper
 {
     InitializeRuntimePointerHelper()
@@ -218,11 +228,4 @@ static struct InitializeRuntimePointerHelper
         RhSetRuntimeInitializationCallback(&InitializeRuntime);
     }
 } initializeRuntimePointerHelper;
-
-extern "C" void* CoreRT_StaticInitialization();
-
-void* CoreRT_StaticInitialization()
-{
-    return &initializeRuntimePointerHelper;
-}
-#endif // CORERT_DLL
+#endif // NATIVEAOT_DLL

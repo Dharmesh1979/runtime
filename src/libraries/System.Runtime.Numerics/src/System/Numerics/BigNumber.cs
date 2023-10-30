@@ -285,9 +285,27 @@ namespace System.Numerics
                                                            | NumberStyles.AllowLeadingSign | NumberStyles.AllowTrailingSign
                                                            | NumberStyles.AllowParentheses | NumberStyles.AllowDecimalPoint
                                                            | NumberStyles.AllowThousands | NumberStyles.AllowExponent
-                                                           | NumberStyles.AllowCurrencySymbol | NumberStyles.AllowHexSpecifier);
+                                                           | NumberStyles.AllowCurrencySymbol | NumberStyles.AllowHexSpecifier
+                                                           | NumberStyles.AllowBinarySpecifier);
 
-        private static readonly uint[] s_uint32PowersOfTen = { 1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000, 1000000000 };
+        private static ReadOnlySpan<uint> UInt32PowersOfTen => [1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000, 1000000000];
+
+        internal enum ParsingStatus
+        {
+            OK,
+            Failed,
+            Overflow
+        }
+
+        [DoesNotReturn]
+        internal static void ThrowOverflowOrFormatException(ParsingStatus status) => throw GetException(status);
+
+        private static Exception GetException(ParsingStatus status)
+        {
+            return status == ParsingStatus.Failed
+                ? new FormatException(SR.Overflow_ParseBigInteger)
+                : new OverflowException(SR.Overflow_ParseBigInteger);
+        }
 
         private struct BigNumberBuffer
         {
@@ -325,18 +343,18 @@ namespace System.Numerics
             return true;
         }
 
-        internal static bool TryParseBigInteger(string? value, NumberStyles style, NumberFormatInfo info, out BigInteger result)
+        internal static ParsingStatus TryParseBigInteger(string? value, NumberStyles style, NumberFormatInfo info, out BigInteger result)
         {
             if (value == null)
             {
                 result = default;
-                return false;
+                return ParsingStatus.Failed;
             }
 
             return TryParseBigInteger(value.AsSpan(), style, info, out result);
         }
 
-        internal static bool TryParseBigInteger(ReadOnlySpan<char> value, NumberStyles style, NumberFormatInfo info, out BigInteger result)
+        internal static ParsingStatus TryParseBigInteger(ReadOnlySpan<char> value, NumberStyles style, NumberFormatInfo info, out BigInteger result)
         {
             if (!TryValidateParseStyleInteger(style, out ArgumentException? e))
             {
@@ -347,17 +365,20 @@ namespace System.Numerics
             if (!FormatProvider.TryStringToBigInteger(value, style, info, bigNumber.digits, out bigNumber.precision, out bigNumber.scale, out bigNumber.sign))
             {
                 result = default;
-                return false;
+                return ParsingStatus.Failed;
             }
 
             if ((style & NumberStyles.AllowHexSpecifier) != 0)
             {
                 return HexNumberToBigInteger(ref bigNumber, out result);
             }
-            else
+
+            if ((style & NumberStyles.AllowBinarySpecifier) != 0)
             {
-                return NumberToBigInteger(ref bigNumber, out result);
+                return BinaryNumberToBigInteger(ref bigNumber, out result);
             }
+
+            return NumberToBigInteger(ref bigNumber, out result);
         }
 
         internal static BigInteger ParseBigInteger(string value, NumberStyles style, NumberFormatInfo info)
@@ -373,19 +394,22 @@ namespace System.Numerics
             {
                 throw e;
             }
-            if (!TryParseBigInteger(value, style, info, out BigInteger result))
+
+            ParsingStatus status = TryParseBigInteger(value, style, info, out BigInteger result);
+            if (status != ParsingStatus.OK)
             {
-                throw new FormatException(SR.Overflow_ParseBigInteger);
+                ThrowOverflowOrFormatException(status);
             }
+
             return result;
         }
 
-        private static bool HexNumberToBigInteger(ref BigNumberBuffer number, out BigInteger result)
+        private static ParsingStatus HexNumberToBigInteger(ref BigNumberBuffer number, out BigInteger result)
         {
             if (number.digits == null || number.digits.Length == 0)
             {
                 result = default;
-                return false;
+                return ParsingStatus.Failed;
             }
 
             const int DigitsPerBlock = 8;
@@ -446,6 +470,11 @@ namespace System.Numerics
 
                 Debug.Assert(partialDigitCount == 0 && bitsBufferPos == -1);
 
+                if (isNegative)
+                {
+                    NumericsHelpers.DangerousMakeTwosComplement(bitsBuffer);
+                }
+
                 // BigInteger requires leading zero blocks to be truncated.
                 bitsBuffer = bitsBuffer.TrimEnd(0u);
 
@@ -457,9 +486,104 @@ namespace System.Numerics
                     sign = 0;
                     bits = null;
                 }
-                else if (bitsBuffer.Length == 1)
+                else if (bitsBuffer.Length == 1 && bitsBuffer[0] <= int.MaxValue)
                 {
-                    sign = (int)bitsBuffer[0];
+                    sign = (int)bitsBuffer[0] * (isNegative ? -1 : 1);
+                    bits = null;
+                }
+                else
+                {
+                    sign = isNegative ? -1 : 1;
+                    bits = bitsBuffer.ToArray();
+                }
+
+                result = new BigInteger(sign, bits);
+                return ParsingStatus.OK;
+            }
+            finally
+            {
+                if (arrayFromPool != null)
+                {
+                    ArrayPool<uint>.Shared.Return(arrayFromPool);
+                }
+            }
+        }
+
+        private static ParsingStatus BinaryNumberToBigInteger(ref BigNumberBuffer number, out BigInteger result)
+        {
+            if (number.digits is null || number.digits.Length == 0)
+            {
+                result = default;
+                return ParsingStatus.Failed;
+            }
+
+            int totalDigitCount = number.digits.Length - 1;   // Ignore trailing '\0'
+            int partialDigitCount;
+
+            (int blockCount, int remainder) = int.DivRem(totalDigitCount, BigInteger.kcbitUint);
+            if (remainder == 0)
+            {
+                partialDigitCount = 0;
+            }
+            else
+            {
+                blockCount++;
+                partialDigitCount = BigInteger.kcbitUint - remainder;
+            }
+
+            Debug.Assert(number.digits[0] is '0' or '1');
+            bool isNegative = number.digits[0] == '1';
+            uint currentBlock = isNegative ? 0xFF_FF_FF_FFu : 0x0;
+
+            uint[]? arrayFromPool = null;
+            Span<uint> buffer = ((uint)blockCount <= BigIntegerCalculator.StackAllocThreshold
+                ? stackalloc uint[BigIntegerCalculator.StackAllocThreshold]
+                : arrayFromPool = ArrayPool<uint>.Shared.Rent(blockCount)).Slice(0, blockCount);
+
+            int bufferPos = blockCount - 1;
+
+            try
+            {
+                foreach (ReadOnlyMemory<char> digitsChunkMem in number.digits.GetChunks())
+                {
+                    ReadOnlySpan<char> chunkDigits = digitsChunkMem.Span;
+                    for (int i = 0; i < chunkDigits.Length; i++)
+                    {
+                        char digitChar = chunkDigits[i];
+                        if (digitChar == '\0')
+                        {
+                            break;
+                        }
+
+                        Debug.Assert(digitChar is '0' or '1');
+                        currentBlock = (currentBlock << 1) | (uint)(digitChar - '0');
+                        partialDigitCount++;
+
+                        if (partialDigitCount == BigInteger.kcbitUint)
+                        {
+                            buffer[bufferPos--] = currentBlock;
+                            partialDigitCount = 0;
+
+                            // we do not need to reset currentBlock now, because it should always set all its bits by left shift in subsequent iterations
+                        }
+                    }
+                }
+
+                Debug.Assert(partialDigitCount == 0 && bufferPos == -1);
+
+                buffer = buffer.TrimEnd(0u);
+
+                int sign;
+                uint[]? bits;
+
+                if (buffer.IsEmpty)
+                {
+                    sign = 0;
+                    bits = null;
+                }
+                else if (buffer.Length == 1)
+                {
+                    sign = (int)buffer[0];
                     bits = null;
 
                     if ((!isNegative && sign < 0) || sign == int.MinValue)
@@ -471,7 +595,7 @@ namespace System.Numerics
                 else
                 {
                     sign = isNegative ? -1 : 1;
-                    bits = bitsBuffer.ToArray();
+                    bits = buffer.ToArray();
 
                     if (isNegative)
                     {
@@ -480,11 +604,11 @@ namespace System.Numerics
                 }
 
                 result = new BigInteger(sign, bits);
-                return true;
+                return ParsingStatus.OK;
             }
             finally
             {
-                if (arrayFromPool != null)
+                if (arrayFromPool is not null)
                 {
                     ArrayPool<uint>.Shared.Return(arrayFromPool);
                 }
@@ -498,8 +622,8 @@ namespace System.Numerics
         // algorithm with a running time of O(N^2). And if it is greater than the threshold, use
         // a divide-and-conquer algorithm with a running time of O(NlogN).
         //
-        private static int s_naiveThreshold = 20000;
-        private static bool NumberToBigInteger(ref BigNumberBuffer number, out BigInteger result)
+        private static int s_naiveThreshold = 20000; // non-readonly for testing
+        private static ParsingStatus NumberToBigInteger(ref BigNumberBuffer number, out BigInteger result)
         {
             int currentBufferSize = 0;
 
@@ -510,10 +634,17 @@ namespace System.Numerics
             const uint TenPowMaxPartial = 1000000000;
 
             int[]? arrayFromPoolForResultBuffer = null;
+
+            if (numberScale == int.MaxValue)
+            {
+                result = default;
+                return ParsingStatus.Overflow;
+            }
+
             if (numberScale < 0)
             {
                 result = default;
-                return false;
+                return ParsingStatus.Failed;
             }
 
             try
@@ -535,7 +666,7 @@ namespace System.Numerics
                 }
             }
 
-            bool Naive(ref BigNumberBuffer number, out BigInteger result)
+            ParsingStatus Naive(ref BigNumberBuffer number, out BigInteger result)
             {
                 Span<uint> stackBuffer = stackalloc uint[BigIntegerCalculator.StackAllocThreshold];
                 Span<uint> currentBuffer = stackBuffer;
@@ -547,17 +678,17 @@ namespace System.Numerics
                     if (!ProcessChunk(digitsChunk.Span, ref currentBuffer))
                     {
                         result = default;
-                        return false;
+                        return ParsingStatus.Failed;
                     }
                 }
 
                 if (partialDigitCount > 0)
                 {
-                    MultiplyAdd(ref currentBuffer, s_uint32PowersOfTen[partialDigitCount], partialValue);
+                    MultiplyAdd(ref currentBuffer, UInt32PowersOfTen[partialDigitCount], partialValue);
                 }
 
                 result = NumberBufferToBigInteger(currentBuffer, number.sign);
-                return true;
+                return ParsingStatus.OK;
 
                 bool ProcessChunk(ReadOnlySpan<char> chunkDigits, ref Span<uint> currentBuffer)
                 {
@@ -619,7 +750,7 @@ namespace System.Numerics
                 }
             }
 
-            bool DivideAndConquer(ref BigNumberBuffer number, out BigInteger result)
+            ParsingStatus DivideAndConquer(ref BigNumberBuffer number, out BigInteger result)
             {
                 Span<uint> currentBuffer;
                 int[]? arrayFromPoolForMultiplier = null;
@@ -674,7 +805,7 @@ namespace System.Numerics
                             if (digitChar != '0')
                             {
                                 result = default;
-                                return false;
+                                return ParsingStatus.Failed;
                             }
                         }
                     }
@@ -696,7 +827,7 @@ namespace System.Numerics
                         // |  A + B * multiplier   |  C + D * multiplier   |
                         for (int i = 0; i < bufferSize; i += blockSize * 2)
                         {
-                            Span<uint> curBufffer = buffer.Slice(i);
+                            Span<uint> curBuffer = buffer.Slice(i);
                             Span<uint> curNewBuffer = newBuffer.Slice(i);
 
                             int len = Math.Min(bufferSize - i, blockSize * 2);
@@ -707,14 +838,14 @@ namespace System.Numerics
                                 Debug.Assert(blockSize == lowerLen);
                                 Debug.Assert(blockSize == multiplier.Length);
                                 Debug.Assert(multiplier.Length == lowerLen);
-                                BigIntegerCalculator.Multiply(multiplier, curBufffer.Slice(blockSize, upperLen), curNewBuffer.Slice(0, len));
+                                BigIntegerCalculator.Multiply(multiplier, curBuffer.Slice(blockSize, upperLen), curNewBuffer.Slice(0, len));
                             }
 
                             long carry = 0;
                             int j = 0;
                             for (; j < lowerLen; j++)
                             {
-                                long digit = (curBufffer[j] + carry) + curNewBuffer[j];
+                                long digit = (curBuffer[j] + carry) + curNewBuffer[j];
                                 curNewBuffer[j] = unchecked((uint)digit);
                                 carry = digit >> 32;
                             }
@@ -776,7 +907,7 @@ namespace System.Numerics
                         ArrayPool<int>.Shared.Return(arrayFromPoolForMultiplier);
                     }
                 }
-                return true;
+                return ParsingStatus.OK;
             }
 
             BigInteger NumberBufferToBigInteger(Span<uint> currentBuffer, bool signa)
@@ -791,7 +922,7 @@ namespace System.Numerics
 
                 if (trailingZeroCount > 0)
                 {
-                    MultiplyAdd(ref currentBuffer, s_uint32PowersOfTen[trailingZeroCount], 0);
+                    MultiplyAdd(ref currentBuffer, UInt32PowersOfTen[trailingZeroCount], 0);
                 }
 
                 int sign;
@@ -854,7 +985,6 @@ namespace System.Numerics
             }
         }
 
-        // This function is consistent with VM\COMNumber.cpp!COMNumber::ParseFormatSpecifier
         internal static char ParseFormatSpecifier(ReadOnlySpan<char> format, out int digits)
         {
             digits = -1;
@@ -865,24 +995,25 @@ namespace System.Numerics
 
             int i = 0;
             char ch = format[i];
-            if (ch >= 'A' && ch <= 'Z' || ch >= 'a' && ch <= 'z')
+            if (char.IsAsciiLetter(ch))
             {
+                // The digits value must be >= 0 && <= 999_999_999,
+                // but it can begin with any number of 0s, and thus we may need to check more than 9
+                // digits.  Further, for compat, we need to stop when we hit a null char.
                 i++;
-                int n = -1;
-
-                if (i < format.Length && format[i] >= '0' && format[i] <= '9')
+                int n = 0;
+                while ((uint)i < (uint)format.Length && char.IsAsciiDigit(format[i]))
                 {
-                    n = format[i++] - '0';
-                    while (i < format.Length && format[i] >= '0' && format[i] <= '9')
+                    // Check if we are about to overflow past our limit of 9 digits
+                    if (n >= 100_000_000)
                     {
-                        int temp = n * 10 + (format[i++] - '0');
-                        if (temp < n)
-                        {
-                            throw new FormatException(SR.Argument_BadFormatSpecifier);
-                        }
-                        n = temp;
+                        throw new FormatException(SR.Argument_BadFormatSpecifier);
                     }
+                    n = ((n * 10) + format[i++] - '0');
                 }
+
+                // If we're at the end of the digits rather than having stopped because we hit something
+                // other than a digit or overflowed, return the standard format info.
                 if (i >= format.Length || format[i] == '\0')
                 {
                     digits = n;
@@ -975,6 +1106,105 @@ namespace System.Numerics
             }
         }
 
+        private static string? FormatBigIntegerToBinary(bool targetSpan, BigInteger value, int digits, Span<char> destination, out int charsWritten, out bool spanSuccess)
+        {
+            // Get the bytes that make up the BigInteger.
+            byte[]? arrayToReturnToPool = null;
+            Span<byte> bytes = stackalloc byte[64]; // arbitrary threshold
+            if (!value.TryWriteOrCountBytes(bytes, out int bytesWrittenOrNeeded))
+            {
+                bytes = arrayToReturnToPool = ArrayPool<byte>.Shared.Rent(bytesWrittenOrNeeded);
+                bool success = value.TryWriteBytes(bytes, out _);
+                Debug.Assert(success);
+            }
+            bytes = bytes.Slice(0, bytesWrittenOrNeeded);
+
+            Debug.Assert(!bytes.IsEmpty);
+
+            byte highByte = bytes[^1];
+
+            int charsInHighByte = 9 - byte.LeadingZeroCount(value._sign >= 0 ? highByte : (byte)~highByte);
+            long tmpCharCount = charsInHighByte + ((long)(bytes.Length - 1) << 3);
+
+            if (tmpCharCount > Array.MaxLength)
+            {
+                Debug.Assert(arrayToReturnToPool is not null);
+                ArrayPool<byte>.Shared.Return(arrayToReturnToPool);
+
+                throw new FormatException(SR.Format_TooLarge);
+            }
+
+            int charsForBits = (int)tmpCharCount;
+
+            Debug.Assert(digits < Array.MaxLength);
+            int charsIncludeDigits = Math.Max(digits, charsForBits);
+
+            try
+            {
+                scoped ValueStringBuilder sb;
+                if (targetSpan)
+                {
+                    if (charsIncludeDigits > destination.Length)
+                    {
+                        charsWritten = 0;
+                        spanSuccess = false;
+                        return null;
+                    }
+
+                    // Because we have ensured destination can take actual char length, so now just use ValueStringBuilder as wrapper so that subsequent logic can be reused by 2 flows (targetSpan and non-targetSpan);
+                    // meanwhile there is no need to copy to destination again after format data for targetSpan flow.
+                    sb = new ValueStringBuilder(destination);
+                }
+                else
+                {
+                    // each byte is typically eight chars
+                    sb = charsIncludeDigits > 512
+                        ? new ValueStringBuilder(charsIncludeDigits)
+                        : new ValueStringBuilder(stackalloc char[512]);
+                }
+
+                if (digits > charsForBits)
+                {
+                    sb.Append(value._sign >= 0 ? '0' : '1', digits - charsForBits);
+                }
+
+                AppendByte(ref sb, highByte, charsInHighByte - 1);
+
+                for (int i = bytes.Length - 2; i >= 0; i--)
+                {
+                    AppendByte(ref sb, bytes[i]);
+                }
+
+                Debug.Assert(sb.Length == charsIncludeDigits);
+
+                if (targetSpan)
+                {
+                    charsWritten = charsIncludeDigits;
+                    spanSuccess = true;
+                    return null;
+                }
+
+                charsWritten = 0;
+                spanSuccess = false;
+                return sb.ToString();
+            }
+            finally
+            {
+                if (arrayToReturnToPool is not null)
+                {
+                    ArrayPool<byte>.Shared.Return(arrayToReturnToPool);
+                }
+            }
+
+            static void AppendByte(ref ValueStringBuilder sb, byte b, int startHighBit = 7)
+            {
+                for (int i = startHighBit; i >= 0; i--)
+                {
+                    sb.Append((char)('0' + ((b >> i) & 0x1)));
+                }
+            }
+        }
+
         internal static string FormatBigInteger(BigInteger value, string? format, NumberFormatInfo info)
         {
             return FormatBigInteger(targetSpan: false, value, format, format, info, default, out _, out _)!;
@@ -999,7 +1229,10 @@ namespace System.Numerics
             {
                 return FormatBigIntegerToHex(targetSpan, value, fmt, digits, info, destination, out charsWritten, out spanSuccess);
             }
-
+            if (fmt == 'b' || fmt == 'B')
+            {
+                return FormatBigIntegerToBinary(targetSpan, value, digits, destination, out charsWritten, out spanSuccess);
+            }
 
             if (value._bits == null)
             {
@@ -1041,7 +1274,7 @@ namespace System.Numerics
                 for (int iuDst = 0; iuDst < cuDst; iuDst++)
                 {
                     Debug.Assert(rguDst[iuDst] < kuBase);
-                    ulong uuRes = NumericsHelpers.MakeUlong(rguDst[iuDst], uCarry);
+                    ulong uuRes = NumericsHelpers.MakeUInt64(rguDst[iuDst], uCarry);
                     rguDst[iuDst] = (uint)(uuRes % kuBase);
                     uCarry = (uint)(uuRes / kuBase);
                 }

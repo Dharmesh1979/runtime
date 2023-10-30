@@ -38,7 +38,7 @@
 #include <mono/utils/mono-coop-mutex.h>
 #include <mono/utils/mono-logger-internals.h>
 #include <mono/utils/mono-linked-list-set.h>
-#include <mono/utils/mono-membar.h>
+#include <mono/utils/mono-memory-model.h>
 #include <mono/utils/mono-mmap.h>
 #include <mono/utils/mono-os-mutex.h>
 #include <mono/utils/mono-os-semaphore.h>
@@ -793,7 +793,7 @@ encode_sleb128 (intptr_t value, uint8_t *buf, uint8_t **endbuf)
 static void
 emit_byte (LogBuffer *logbuffer, int value)
 {
-	logbuffer->cursor [0] = value;
+	logbuffer->cursor [0] = GINT_TO_UINT8 (value);
 	logbuffer->cursor++;
 
 	g_assert (logbuffer->cursor <= logbuffer->buf_end && "Why are we writing past the buffer end?");
@@ -956,7 +956,7 @@ write_int16 (char *buf, int32_t value)
 {
 	int i;
 	for (i = 0; i < 2; ++i) {
-		buf [i] = value;
+		buf [i] = GINT32_TO_UINT8 (value);
 		value >>= 8;
 	}
 	return buf + 2;
@@ -967,7 +967,7 @@ write_int32 (char *buf, int32_t value)
 {
 	int i;
 	for (i = 0; i < 4; ++i) {
-		buf [i] = value;
+		buf [i] = GINT_TO_UINT8 (value);
 		value >>= 8;
 	}
 	return buf + 4;
@@ -978,7 +978,7 @@ write_int64 (char *buf, int64_t value)
 {
 	int i;
 	for (i = 0; i < 8; ++i) {
-		buf [i] = value;
+		buf [i] = GINT_TO_UINT8 (value);
 		value >>= 8;
 	}
 	return buf + 8;
@@ -2902,7 +2902,7 @@ start_helper_thread (void)
 
 	mono_profhelper_setup_command_server (&log_profiler.server_socket, &log_profiler.command_port, "log");
 
-	if (!mono_native_thread_create (&log_profiler.helper_thread, helper_thread, NULL)) {
+	if (!mono_native_thread_create (&log_profiler.helper_thread, (gpointer)helper_thread, NULL)) {
 		mono_profiler_printf_err ("Could not start log profiler helper thread");
 		mono_profhelper_close_socket_fd (log_profiler.server_socket);
 		exit (1);
@@ -3038,7 +3038,7 @@ start_writer_thread (void)
 {
 	mono_atomic_store_i32 (&log_profiler.run_writer_thread, 1);
 
-	if (!mono_native_thread_create (&log_profiler.writer_thread, writer_thread, NULL)) {
+	if (!mono_native_thread_create (&log_profiler.writer_thread, (gpointer)writer_thread, NULL)) {
 		mono_profiler_printf_err ("Could not start log profiler writer thread");
 		exit (1);
 	}
@@ -3161,7 +3161,7 @@ start_dumper_thread (void)
 {
 	mono_atomic_store_i32 (&log_profiler.run_dumper_thread, 1);
 
-	if (!mono_native_thread_create (&log_profiler.dumper_thread, dumper_thread, NULL)) {
+	if (!mono_native_thread_create (&log_profiler.dumper_thread, (gpointer)dumper_thread, NULL)) {
 		mono_profiler_printf_err ("Could not start log profiler dumper thread");
 		exit (1);
 	}
@@ -3271,7 +3271,7 @@ proflog_icall_SetSampleMode (MonoProfilerSampleMode mode, gint32 frequency)
 
 	mono_coop_mutex_unlock (&log_profiler.api_mutex);
 
-	return result;
+	return !!result;
 }
 
 ICALL_EXPORT MonoBoolean

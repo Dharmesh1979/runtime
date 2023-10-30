@@ -15,6 +15,8 @@ namespace System.Collections.Tests
     public abstract class HashSet_Generic_Tests<T> : ISet_Generic_Tests<T>
     {
         #region ISet<T> Helper Methods
+        protected override bool Enumerator_Empty_UsesSingletonInstance => true;
+        protected override bool Enumerator_Empty_Current_UndefinedOperation_Throws => true;
 
         protected override bool ResetImplemented => true;
 
@@ -438,7 +440,9 @@ namespace System.Collections.Tests
             Assert.Equal(value, actualValue);
             if (!typeof(T).IsValueType)
             {
+#pragma warning disable xUnit2005 // Do not use Assert.Same() on value type 'T'. Value types do not have identity. Use Assert.Equal instead.
                 Assert.Same((object)value, (object)actualValue);
+#pragma warning restore xUnit2005
             }
         }
 
@@ -453,7 +457,9 @@ namespace System.Collections.Tests
             Assert.Equal(value, actualValue);
             if (!typeof(T).IsValueType)
             {
+#pragma warning disable xUnit2005 // Do not use Assert.Same() on value type 'T'. Value types do not have identity. Use Assert.Equal instead.
                 Assert.Same((object)value, (object)actualValue);
+#pragma warning restore xUnit2005
             }
         }
 
